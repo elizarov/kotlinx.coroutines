@@ -244,7 +244,7 @@ internal open class JobSupport : AbstractCoroutineContextElement(Job), Job {
                 // SINGLE/SINGLE+ state -- one completion handler
                 state is JobNode -> {
                     // try promote it to the list (SINGLE+ state)
-                    state.addIfEmpty(NodeList())
+                    state.addFirstIfEmpty(NodeList())
                     // it must be in SINGLE+ state or state has changed (node could have need removed from state)
                     val list = state.next() // either NodeList or somebody else won the race, updated state
                     // just attempt converting it to list if state is still the same, then continue lock-free loop
