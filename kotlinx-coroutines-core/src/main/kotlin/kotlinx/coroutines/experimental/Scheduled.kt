@@ -9,7 +9,7 @@ val KEEP_ALIVE = java.lang.Long.getLong("kotlinx.coroutines.ScheduledExecutor.ke
 
 internal val scheduledExecutor by lazy<ScheduledExecutorService> {
     ScheduledThreadPoolExecutor(1) { r ->
-        Thread(r, "kotlinx.coroutines.ScheduledExecutor")
+        Thread(r, "kotlinx.coroutines.ScheduledExecutor").apply { isDaemon = false }
     }.apply {
         setKeepAliveTime(KEEP_ALIVE, TimeUnit.MILLISECONDS)
         allowCoreThreadTimeOut(true)
