@@ -79,7 +79,7 @@ internal class EventLoopImpl(
 
     override fun processNextEvent(): Boolean {
         if (Thread.currentThread() != thread) return false
-        (queue.removeFirstOrNull() as? Runnable)?.apply {
+        (queue.removeNextOrNull() as? Runnable)?.apply {
             run()
             return true
         }

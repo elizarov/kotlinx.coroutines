@@ -1,6 +1,5 @@
 package kotlinx.coroutines.experimental.internal
 
-import java.util.concurrent.atomic.AtomicIntegerFieldUpdater
 import java.util.concurrent.atomic.AtomicReferenceFieldUpdater
 
 private typealias Node = LockFreeLinkedListNode
@@ -16,7 +15,7 @@ private typealias Node = LockFreeLinkedListNode
 @Suppress("LeakingThis")
 internal open class LockFreeLinkedListNode {
     @Volatile
-    private var _next: Any = this // DoubleLinkedNode | Removed | CondAdd
+    private var _next: Any = this // DoubleLinkedNode | Removed | AtomicOperationDescriptor
     @Volatile
     private var prev: Any = this // DoubleLinkedNode | Removed
     @Volatile
@@ -34,48 +33,28 @@ internal open class LockFreeLinkedListNode {
             AtomicReferenceFieldUpdater.newUpdater(Node::class.java, Removed::class.java, "removedRef")
     }
 
-    private class Removed(val ref: Node) {
+    private open class Removed(val ref: Node) {
         override fun toString(): String = "Removed[$ref]"
+        open val attachment: Any? get() = null
+    }
+
+    private class RemovedWithAttachment(ref: Node, override val attachment: Any?) : Removed(ref) {
+        override fun toString(): String = "RemovedWithAttachment[$ref, $attachment]"
     }
 
     private fun removed(): Removed =
         removedRef ?: Removed(this).also { REMOVED_REF.lazySet(this, it) }
 
-    abstract class CondAdd {
+    abstract class ConditionalAdd : AtomicOperationDescriptor() {
         internal lateinit var newNode: Node
         internal lateinit var oldNext: Node
-        @Volatile
-        private var consensus: Int = UNDECIDED // status of operation
-        abstract fun isCondition(): Boolean
 
-        private companion object {
-            @JvmStatic
-            val CONSENSUS: AtomicIntegerFieldUpdater<CondAdd> =
-                AtomicIntegerFieldUpdater.newUpdater(CondAdd::class.java, "consensus")
-
-            const val UNDECIDED = 0
-            const val SUCCESS = 1
-            const val FAILURE = 2
-        }
-
-        fun completeAdd(node: Node): Boolean {
-            // make decision on status
-            var consensus: Int
-            while (true) {
-                consensus = this.consensus
-                if (consensus != UNDECIDED) break
-                val proposal = if (isCondition()) SUCCESS else FAILURE
-                if (CONSENSUS.compareAndSet(this, UNDECIDED, proposal)) {
-                    consensus = proposal
-                    break
-                }
-            }
-            val success = consensus == SUCCESS
+        override fun finish(node: Any?, success: Boolean) {
+            node as Node // type assertion
             if (NEXT.compareAndSet(node, this, if (success) newNode else oldNext)) {
                 // only the thread the makes this update actually finishes add operation
                 if (success) newNode.finishAdd(oldNext)
             }
-            return success
         }
     }
 
@@ -86,8 +65,8 @@ internal open class LockFreeLinkedListNode {
     private val next: Any get() {
         while (true) { // helper loop on _next
             val next = this._next
-            if (next !is CondAdd) return next
-            next.completeAdd(this)
+            if (next !is AtomicOperationDescriptor) return next
+            next.perform(this)
         }
     }
 
@@ -95,17 +74,17 @@ internal open class LockFreeLinkedListNode {
 
     // ------ addFirstXXX ------
 
-    private fun addFirstCC(node: Node, condAdd: CondAdd?): Boolean {
+    private fun addFirstCC(node: Node, conditionalAdd: ConditionalAdd?): Boolean {
         require(node.isFresh)
-        condAdd?.newNode = node
+        conditionalAdd?.newNode = node
         while (true) { // lock-free loop on next
             val next = this.next as Node // this sentinel node is never removed
             PREV.lazySet(node, this)
             NEXT.lazySet(node, next)
-            condAdd?.oldNext = next
-            if (NEXT.compareAndSet(this, next, condAdd ?: node)) {
+            conditionalAdd?.oldNext = next
+            if (NEXT.compareAndSet(this, next, conditionalAdd ?: node)) {
                 // added successfully (linearized add) -- fixup the list
-                return condAdd?.completeAdd(this) ?: run { node.finishAdd(next); true }
+                return conditionalAdd?.perform(this) ?: run { node.finishAdd(next); true }
             }
         }
     }
@@ -119,8 +98,8 @@ internal open class LockFreeLinkedListNode {
      * Adds first item to this list atomically if the [condition] is true.
      */
     inline fun addFirstIf(node: Node, crossinline condition: () -> Boolean): Boolean =
-        addFirstCC(node, object : CondAdd() {
-            override fun isCondition(): Boolean = condition()
+        addFirstCC(node, object : ConditionalAdd() {
+            override fun prepare(): Boolean = condition()
         })
 
     fun addFirstIfEmpty(node: Node): Boolean {
@@ -133,19 +112,32 @@ internal open class LockFreeLinkedListNode {
         return true
     }
 
+    fun describeAddFist(node: Node): AtomicOperationPart {
+        require(node.isFresh)
+        return object : AbstractAtomicOperationPart() {
+            override fun onPrepare(next: Node): Boolean {
+                PREV.lazySet(node, this)
+                NEXT.lazySet(node, next)
+                return true
+            }
+            override fun updatedNext(next: Node): Any = node
+            override fun finishOnSuccess(next: Node) = node.finishAdd(next)
+        }
+    }
+
     // ------ addLastXXX ------
 
-    private fun addLastCC(node: Node, condAdd: CondAdd?): Boolean {
+    private fun addLastCC(node: Node, conditionalAdd: ConditionalAdd?): Boolean {
         require(node.isFresh)
-        condAdd?.newNode = node
+        conditionalAdd?.newNode = node
         while (true) { // lock-free loop on prev.next
             val prev = prevHelper() ?: continue
             PREV.lazySet(node, prev)
             NEXT.lazySet(node, this)
-            condAdd?.oldNext = this
-            if (NEXT.compareAndSet(prev, this, condAdd ?: node)) {
+            conditionalAdd?.oldNext = this
+            if (NEXT.compareAndSet(prev, this, conditionalAdd ?: node)) {
                 // added successfully (linearized add) -- fixup the list
-                return condAdd?.completeAdd(prev) ?: run { node.finishAdd(this); true }
+                return conditionalAdd?.perform(prev) ?: run { node.finishAdd(this); true }
             }
         }
     }
@@ -159,8 +151,8 @@ internal open class LockFreeLinkedListNode {
      * Adds last item to this list atomically if the [condition] is true.
      */
     inline fun addLastIf(node: Node, crossinline condition: () -> Boolean): Boolean =
-        addLastCC(node, object : CondAdd() {
-            override fun isCondition(): Boolean = condition()
+        addLastCC(node, object : ConditionalAdd() {
+            override fun prepare(): Boolean = condition()
         })
 
     inline fun addLastIfPrev(node: Node, predicate: (Node) -> Boolean): Boolean {
@@ -201,27 +193,87 @@ internal open class LockFreeLinkedListNode {
             if (next is Removed) return false // was already removed -- don't try to help (original thread will take care)
             if (NEXT.compareAndSet(this, next, (next as Node).removed())) {
                 // was removed successfully (linearized remove) -- fixup the list
-                helpDelete()
-                next.helpInsert(prev.unwrap())
+                finishRemove(next)
                 return true
             }
         }
     }
 
-    fun removeFirstOrNull(): Node? {
+    fun removeNextOrNull(): Node? {
         while (true) { // try to linearize
-            val first = next()
-            if (first == this) return null
-            if (first.remove()) return first
+            val next = next()
+            if (next === this) return null
+            if (next.remove()) return next
         }
     }
 
-    inline fun <reified T : Node> removeFirstIfIsInstanceOf(): T? {
+    inline fun <reified T : Node> removeNextIfIsInstanceOf(): T? {
         while (true) { // try to linearize
-            val first = next()
-            if (first == this) return null
-            if (first !is T) return null
-            if (first.remove()) return first
+            val next = next()
+            if (next === this) return null
+            if (next !is T) return null
+            if (next.remove()) return next
+        }
+    }
+
+    fun describeRemove() : AtomicOperationPart? {
+        if (isRemoved) return null // fast path if was already removed
+        return object : AbstractAtomicOperationPart() {
+            override fun updatedNext(next: Node) = next.removed()
+            override fun finishOnSuccess(next: Node) = finishRemove(next)
+        }
+    }
+
+    fun describeRemoveNext() : AtomicOperationPart? {
+        val next = next()
+        if (next === this) return null
+        return next.describeRemove()
+    }
+
+    fun removeWithAttachment(attachment: Any?): Boolean {
+        while (true) { // lock-free loop on next
+            val next = this.next
+            if (next is Removed) return false // was already removed -- don't try to help (original thread will take care)
+            if (NEXT.compareAndSet(this, next, RemovedWithAttachment(next as Node, attachment))) {
+                // was removed successfully (linearized remove) -- fixup the list
+                finishRemove(next)
+                return true
+            }
+        }
+    }
+
+    fun removedAttachment(): Any? = (_next as? RemovedWithAttachment)?.attachment
+
+    // ------ multi-word atomic operations helper ------
+
+    private abstract inner class AbstractAtomicOperationPart : AtomicOperationPart() {
+        var originalNext: Node? = null
+
+        open fun onPrepare(next: Node): Boolean = true
+        abstract fun updatedNext(next: Node): Any
+        abstract fun finishOnSuccess(next: Node)
+
+        override fun prepare(operation: AtomicOperationDescriptor): Boolean {
+            while (true) { // lock free loop on next
+                val next = _next // volatile read
+                if (_next === operation) return true // already in process of operation -- all is good
+                if (next is Removed) return false // cannot update removed (which is a final state) -- failed
+                if (next is AtomicOperationDescriptor) {
+                    // somebody else's operation is in process -- help it
+                    next.perform(this@LockFreeLinkedListNode)
+                    continue // and retry
+                }
+                originalNext = next as Node // must be a node
+                if (!onPrepare(next)) return false // some other invariant failed
+                if (NEXT.compareAndSet(this@LockFreeLinkedListNode, next, operation)) return true // prepared!!!
+            }
+        }
+
+        override fun finish(operation: AtomicOperationDescriptor, success: Boolean) {
+            val update = if (success) updatedNext(originalNext!!) else originalNext
+            if (NEXT.compareAndSet(this@LockFreeLinkedListNode, operation, update)) {
+                if (success) finishOnSuccess(originalNext!!)
+            }
         }
     }
 
@@ -239,6 +291,11 @@ internal open class LockFreeLinkedListNode {
                 return
             }
         }
+    }
+
+    private fun finishRemove(next: Node) {
+        helpDelete()
+        next.helpInsert(prev.unwrap())
     }
 
     private fun markPrev(): Node {

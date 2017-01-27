@@ -48,7 +48,7 @@ public class SuspendingRendezvous<E> : SuspendingQueue<E> {
         return false
     }
 
-    private fun takeFirstReceiveWaiter() = waiters.removeFirstIfIsInstanceOf<ReceiveWaiter<E>>()
+    private fun takeFirstReceiveWaiter() = waiters.removeNextIfIsInstanceOf<ReceiveWaiter<E>>()
 
     // ------ ReceiveChannel ------
 
@@ -86,7 +86,7 @@ public class SuspendingRendezvous<E> : SuspendingQueue<E> {
         return null
     }
 
-    private fun takeFirstSendWaiter() = waiters.removeFirstIfIsInstanceOf<SendWaiter<E>>()
+    private fun takeFirstSendWaiter() = waiters.removeNextIfIsInstanceOf<SendWaiter<E>>()
 }
 
 private class SendWaiter<E>(

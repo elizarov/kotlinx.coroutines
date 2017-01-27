@@ -66,6 +66,50 @@ class LockFreeLinkedListTest {
         assertContents(list, 3, 1)
     }
 
+
+    @Test
+    fun testRemoveTwoAtomic() {
+        val list = LockFreeLinkedListHead()
+        val n1 = IntNode(1).apply { list.addLast(this) }
+        val n2 = IntNode(2).apply { list.addLast(this) }
+        assertContents(list, 1, 2)
+        assertFalse(n1.isRemoved)
+        assertFalse(n2.isRemoved)
+        val remove1Desc = n1.describeRemove()!!
+        val remove2Desc = n2.describeRemove()!!
+        val operation = object : AtomicOperationDescriptor() {
+            override fun prepare(): Boolean = remove1Desc.prepare(this) && remove2Desc.prepare(this)
+            override fun finish(node: Any?, success: Boolean) {
+                remove1Desc.finish(this, success)
+                remove2Desc.finish(this, success)
+            }
+        }
+        assertTrue(operation.perform())
+        assertTrue(n1.isRemoved)
+        assertTrue(n2.isRemoved)
+        assertContents(list)
+    }
+
+    @Test
+    fun testAddRemoveAtomic() {
+        val list = LockFreeLinkedListHead()
+        val n1 = IntNode(1).apply { list.addLast(this) }
+        assertContents(list, 1)
+        assertFalse(n1.isRemoved)
+        val remove1Desc = n1.describeRemove()!!
+        val add2Desc = list.describeAddFist(IntNode(2))
+        val operation = object : AtomicOperationDescriptor() {
+            override fun prepare(): Boolean = remove1Desc.prepare(this) && add2Desc.prepare(this)
+            override fun finish(node: Any?, success: Boolean) {
+                remove1Desc.finish(this, success)
+                add2Desc.finish(this, success)
+            }
+        }
+        assertTrue(operation.perform())
+        assertTrue(n1.isRemoved)
+        assertContents(list, 2)
+    }
+
     private fun assertContents(list: LockFreeLinkedListHead, vararg expected: Int) {
         list.validate()
         val n = expected.size
