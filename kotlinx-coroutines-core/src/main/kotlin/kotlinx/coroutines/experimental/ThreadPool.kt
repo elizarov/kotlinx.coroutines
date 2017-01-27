@@ -1,122 +1,144 @@
 package kotlinx.coroutines.experimental
 
+import kotlinx.coroutines.experimental.internal.AtomicOperationDescriptor
 import kotlinx.coroutines.experimental.internal.LockFreeLinkedListHead
 import kotlinx.coroutines.experimental.internal.LockFreeLinkedListNode
 import java.util.concurrent.atomic.AtomicLongFieldUpdater
-import java.util.concurrent.atomic.AtomicReferenceArray
 import java.util.concurrent.locks.LockSupport
 import kotlin.coroutines.CoroutineContext
 
 internal class ThreadPool(
-    val maxThreads: Int,
+    maxThreads: Int,
     val name: String,
-    val job: Job? = null
+    val job: Job? = null,
+    val threadFactory: ((Runnable, Int) -> Thread)? = null
 ) : CoroutineDispatcher() {
     init {
-        require(maxThreads in 1..(WORKER_MASK.toInt() - 1))
+        require(maxThreads in 1..MAX_THREADS)
     }
 
-    private val tasks = LockFreeLinkedListHead()
-
-    private val workers = AtomicReferenceArray<Worker?>(maxThreads + 1) // ids starts at 1
+    private val taskQueue = LockFreeLinkedListHead()
+    private val parkedWorkers = LockFreeLinkedListHead()
+    private val allWorkerBits = (1L shl maxThreads) - 1L
 
     @Volatile
-    private var state: Long = 0L
+    private var workerBits: Long = 0L
 
-    private companion object {
-        val STATE: AtomicLongFieldUpdater<ThreadPool> =
-            AtomicLongFieldUpdater.newUpdater(ThreadPool::class.java, "state")
+    companion object {
+        private val WORKER_BITS: AtomicLongFieldUpdater<ThreadPool> =
+            AtomicLongFieldUpdater.newUpdater(ThreadPool::class.java, "workerBits")
 
-        const val WORKER_BITS = 16
-        const val WORKER_MASK = (1L shl WORKER_BITS) - 1L
+        val MAX_THREADS = 64
 
-        const val VERSION_SHIFT = WORKER_BITS
-        const val VERSION_BITS = 16
-        const val VERSION_INC = 1L shl VERSION_SHIFT
-        const val VERSION_MASK = ((1L shl VERSION_BITS) - 1L) shl VERSION_SHIFT
-
-        const val THREADS_SHIFT = VERSION_SHIFT + VERSION_BITS
-        const val THREADS_BITS = 16
-        const val THREADS_MASK = ((1L shl THREADS_BITS) - 1L) shl THREADS_SHIFT
-
-        @JvmStatic
-        fun Long.nextVersion() = ((this + VERSION_INC) and VERSION_MASK) or (this and VERSION_MASK.inv())
-
-        @JvmStatic
-        fun Long.withWorker(worker: Int) = (this and WORKER_MASK.inv()) or worker.toLong()
-
-        @JvmStatic
-        fun Long.withThreads(threads: Int) = (this and THREADS_MASK.inv()) or (threads.toLong() shl THREADS_SHIFT)
+        val MAX_PARK_TIME_NS = 100_000_000L
     }
 
     override fun isDispatchNeeded(context: CoroutineContext): Boolean = true
 
     override fun dispatch(context: CoroutineContext, block: Runnable) {
         while (true) { // lock-free loop of state
-            val state = this.state // volatile read
-            val worker = takeParkedWorker(state)
-            if (worker == null) {
-                // no parked workers or failed to take one due to contention
-                // ... see if there's room to create new one
-                val threads = ((state and THREADS_MASK) shr THREADS_SHIFT).toInt()
-                if (threads < maxThreads) {
-                    // we can try to create new one!
-                    if (STATE.compareAndSet(this, state, state.nextVersion().withThreads(threads + 1))) {
-                        newWorker().scheduleAndStart(block)
-                        return
-                    }
-                } else {
-                    // all threads are busy or high contention... just queue a task
-                    tasks.addLast(makeTask(block))
-                    // recheck state if there is a parked thread now
-                    takeParkedWorker(this.state)?.let { LockSupport.unpark(it) }
-                    // done? todo:
-                    return
-                }
-            } else {
-                // there is a parked worker we can try to use!
-                if (STATE.compareAndSet(this, state, state.nextVersion().withWorker(worker.next))) {
-                    worker.scheduleAndUnpark(block)
+            // try to unpark parked worker
+            val parkedWorker = parkedWorkers.next() as? ParkedWorker
+            if (parkedWorker != null) {
+                if (parkedWorker.removeWithAttachment(block)) {
+                    // scheduled to the worker
+                    LockSupport.unpark(parkedWorker.worker.thread)
                     return
                 }
             }
+            // see if can create new worker
+            val workerBits = this.workerBits
+            if (workerBits != allWorkerBits) {
+                val id = java.lang.Long.numberOfTrailingZeros(workerBits.inv())
+                if (WORKER_BITS.compareAndSet(this, workerBits, workerBits or (1L shl id))) {
+                    // reserved id for new worker successfully
+                    startNewWorker(id, block)
+                    return
+                }
+            }
+            // schedule task if there are no parked workers
+            if (taskQueue.addLastIf(makeTask(block)) { parkedWorkers.isEmpty }) return // success
         }
-    }
-
-    private fun takeParkedWorker(state: Long): Worker? {
-        val workerId = (state and WORKER_MASK).toInt()
-        if (workerId == 0) return null
-        val worker = workers.get(workerId)!!
-        if (STATE.compareAndSet(this, state, state.nextVersion().withWorker(worker.next))) return worker
-        return null
     }
 
     private fun makeTask(block: Runnable): Task = (block as? Task) ?: Task(block)
 
     private class Task(block: Runnable) : LockFreeLinkedListNode(), Runnable by block
 
-    private fun newWorker(): Worker {
-        // todo
-        return Worker(1)
+    private fun startNewWorker(id: Int, task: Runnable) {
+        val worker = Worker(id, task)
+        val thread = threadFactory?.invoke(worker, id)
+                ?: Thread(worker, "$name-Worker-${id+1}").apply { /*isDaemon = true*/ }
+        worker.thread = thread
+        thread.start()
     }
 
+    private class ParkedWorker(val worker: Worker) : LockFreeLinkedListNode()
 
-    private inner class Worker(val id: Int) : Thread("$name-Worker-$id") {
-        var task: Runnable? = null
-        var next: Int = 0
+    private inner class Worker(val id: Int, var task: Runnable?) : Runnable {
+        val workerBit = 1L shl id
+        var parkedWorker: ParkedWorker? = null
+        lateinit var thread: Thread
 
         override fun run() {
-            // todo
+            while (true) {
+                try {
+                    work()
+                } catch (e: Throwable) {
+                    val handled = job?.cancel(e) ?: false
+                    if (!handled) thread.uncaughtExceptionHandler.uncaughtException(thread, e)
+                }
+            }
         }
 
-        fun scheduleAndStart(block: Runnable) {
-            task = block
-            start()
-        }
+        fun work() {
+            if (task == null) {
+                task = parkedWorker?.let {
+                    // was parked -- see if we've got a task from unparker for us
+                    if (it.isRemoved) {
+                        parkedWorker = null
+                        it.removedAttachment() as? Runnable
+                    } else null
+                }
+                if (task == null) {
+                    if (parkedWorker == null) {
+                        // was not parked -- try take next task from queue
+                        task = taskQueue.removeNextOrNull() as? Runnable
+                    } else {
+                        // was parked -- atomically remove from both taskQueue && parkedWorkers
+                        taskQueue.describeRemoveNext()?.let { taskRemoveDesc ->
+                            // we are here only if taskQueue has items
+                            val parkedRemoveDesc = parkedWorker!!.describeRemove() ?: return // retry if already unparked
+                            val operation = object : AtomicOperationDescriptor() {
+                                override fun prepare(): Boolean =
+                                    taskRemoveDesc.prepare(this) && parkedRemoveDesc.prepare(this)
 
-        fun scheduleAndUnpark(block: Runnable) {
-            task = block
-            LockSupport.unpark(this)
+                                override fun finish(node: Any?, success: Boolean) {
+                                    taskRemoveDesc.finish(this, success)
+                                    parkedRemoveDesc.finish(this, success)
+                                }
+                            }
+                            if (!operation.perform(Unit)) return // retry on race
+                        }
+                    }
+                }
+            }
+            task?.let {
+                task = null
+                it.run()
+                return // return after task was run either successfully or not
+            }
+            // if was parked before, and no task -- try to unpark and remove itself from workers bits
+            parkedWorker?.let {
+                // can remove only if no tasks are queued
+                if (it.remove()) {
+                    // todo
+                }
+            }
+            // add to parkedWorkers if needed
+            if (parkedWorker == null)
+                parkedWorker = ParkedWorker(this).also { parkedWorkers.addFirst(it) }
+            LockSupport.parkNanos(MAX_PARK_TIME_NS)
         }
     }
 }
