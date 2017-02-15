@@ -102,6 +102,7 @@
         <module>kotlinx-coroutines-jdk8</module>
         <module>kotlinx-coroutines-nio</module>
         <module>kotlinx-coroutines-rx1</module>
+        <module>kotlinx-coroutines-rx2</module>
         <module>kotlinx-coroutines-rx-example</module>
         <module>site</module>
     </modules>
