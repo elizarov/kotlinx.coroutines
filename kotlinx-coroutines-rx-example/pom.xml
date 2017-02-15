@@ -64,7 +64,7 @@
         </dependency>
         <dependency>
             <groupId>org.jetbrains.kotlinx</groupId>
-            <artifactId>kotlinx-coroutines-rx</artifactId>
+            <artifactId>kotlinx-coroutines-rx1</artifactId>
             <version>${project.version}</version>
             <scope>compile</scope>
         </dependency>

@@ -25,7 +25,7 @@
         <version>0.11-rc-SNAPSHOT</version>
     </parent>
 
-    <artifactId>kotlinx-coroutines-rx</artifactId>
+    <artifactId>kotlinx-coroutines-rx1</artifactId>
     <packaging>jar</packaging>
 
     <build>
@@ -37,7 +37,20 @@
         <dependency>
             <groupId>io.reactivex</groupId>
             <artifactId>rxjava</artifactId>
-            <version>1.1.5</version>
+            <version>1.2.6</version>
+        </dependency>
+        <dependency>
+            <groupId>org.jetbrains.kotlinx</groupId>
+            <artifactId>kotlinx-coroutines-core</artifactId>
+            <version>${project.version}</version>
+            <scope>compile</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.jetbrains.kotlinx</groupId>
+            <artifactId>kotlinx-coroutines-core</artifactId>
+            <version>${project.version}</version>
+            <classifier>tests</classifier>
+            <scope>test</scope>
         </dependency>
     </dependencies>
 
