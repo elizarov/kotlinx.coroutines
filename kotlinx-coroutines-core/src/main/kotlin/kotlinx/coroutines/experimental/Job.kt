@@ -17,6 +17,7 @@
 package kotlinx.coroutines.experimental
 
 import kotlinx.coroutines.experimental.internal.*
+import kotlinx.coroutines.experimental.select.ALREADY_SELECTED
 import java.util.concurrent.Future
 import java.util.concurrent.atomic.AtomicReferenceFieldUpdater
 import kotlin.coroutines.experimental.AbstractCoroutineContextElement
@@ -396,45 +397,60 @@ public open class JobSupport(active: Boolean) : AbstractCoroutineContextElement(
         }
     }
 
-    internal fun describeStart(failureMarker: Any): AtomicDesc =
-        object : AtomicDesc() {
-            override fun prepare(op: AtomicOp): Any? {
-                while (true) { // lock-free loop on state
-                    val state = this@JobSupport._state
-                    when {
-                        state === op -> return null // already in progress
-                        state is OpDescriptor -> state.perform(this@JobSupport) // help
-                        state === EmptyNew -> { // EMPTY_NEW state -- no completion handlers, new
-                            if (STATE.compareAndSet(this@JobSupport, state, op)) return null // success
+    public fun performAtomicTrySelect(desc: AtomicDesc): Any? = AtomicSelectOp(desc, true).perform(null)
+    public fun performAtomicIfNotSelected(desc: AtomicDesc): Any? = AtomicSelectOp(desc, false).perform(null)
+
+    private inner class AtomicSelectOp(
+        val desc: AtomicDesc,
+        val activate: Boolean
+    ) : AtomicOp () {
+        override fun prepare(): Any? = prepareIfNotSelected() ?: desc.prepare(this)
+
+        override fun complete(affected: Any?, failure: Any?) {
+            completeSelect(failure)
+            desc.complete(this, failure)
+        }
+
+        fun prepareIfNotSelected(): Any? {
+            while (true) { // lock-free loop on state
+                val state = _state
+                when {
+                    state === this -> return null // already in progress
+                    state is OpDescriptor -> state.perform(this@JobSupport) // help
+                    state === EmptyNew -> { // EMPTY_NEW state -- no completion handlers, new
+                        if (STATE.compareAndSet(this@JobSupport, state, this)) return null // success
+                    }
+                    state is NodeList -> { // LIST -- a list of completion handlers (either new or active)
+                        if (state.isActive) return ALREADY_SELECTED
+                        if (NodeList.ACTIVE.compareAndSet(state, null, this)) return null // success
+                    }
+                    else -> return ALREADY_SELECTED // not a new state
+                }
+            }
+        }
+
+        private fun completeSelect(failure: Any?) {
+            val success = failure == null
+            val state = _state
+            when {
+                state === this -> {
+                    val update = if (success && activate) EmptyActive else EmptyNew
+                    if (STATE.compareAndSet(this@JobSupport, this, update)) {
+                        if (success) onStart()
+                    }
+                }
+                state is NodeList -> { // LIST -- a list of completion handlers (either new or active)
+                    if (state._active === this) {
+                        val update = if (success && activate) NodeList.ACTIVE_STATE else null
+                        if (NodeList.ACTIVE.compareAndSet(state, this, update)) {
+                            if (success) onStart()
                         }
-                        state is NodeList -> { // LIST -- a list of completion handlers (either new or active)
-                            if (state.isActive) return failureMarker
-                            if (NodeList.ACTIVE.compareAndSet(state, null, op)) return null // success
-                        }
-                        else -> return failureMarker // not a new state
                     }
                 }
             }
 
-            override fun complete(op: AtomicOp, failure: Any?) {
-                val success = failure == null
-                val state = this@JobSupport._state
-                when {
-                    state === op -> {
-                        if (STATE.compareAndSet(this@JobSupport, op, if (success) EmptyActive else EmptyNew)) {
-                            if (success) onStart()
-                        }
-                    }
-                    state is NodeList -> { // LIST -- a list of completion handlers (either new or active)
-                        if (state._active === op) {
-                            if (NodeList.ACTIVE.compareAndSet(state, op, if (success) NodeList.ACTIVE_STATE else null)) {
-                                if (success) onStart()
-                            }
-                        }
-                    }
-                }
-            }
         }
+    }
 
     /**
      * Override to provide the actual [start] action.

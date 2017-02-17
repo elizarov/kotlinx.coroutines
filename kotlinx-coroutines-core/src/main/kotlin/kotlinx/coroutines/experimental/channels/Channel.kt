@@ -19,12 +19,15 @@ package kotlinx.coroutines.experimental.channels
 import kotlinx.coroutines.experimental.CancellationException
 import kotlinx.coroutines.experimental.CoroutineScope
 import kotlinx.coroutines.experimental.Job
+import kotlinx.coroutines.experimental.select.SelectBuilder
+import kotlinx.coroutines.experimental.select.SelectableReceive
+import kotlinx.coroutines.experimental.select.SelectableSend
 import kotlinx.coroutines.experimental.yield
 
 /**
  * Sender's interface to [Channel].
  */
-public interface SendChannel<in E> {
+public interface SendChannel<in E> : SelectableSend<E> {
     /**
      * Returns `true` if this channel was closed by invocation of [close] and thus
      * the [send] attempt throws [ClosedSendChannelException]. If the channel was closed because of the exception, it
@@ -80,7 +83,7 @@ public interface SendChannel<in E> {
 /**
  * Receiver's interface to [Channel].
  */
-public interface ReceiveChannel<out E> {
+public interface ReceiveChannel<out E> : SelectableReceive<E> {
     /**
      * Returns `true` if this channel was closed by invocation of [close][SendChannel.close] on the [SendChannel]
      * side and all previously sent items were already received, so that the [receive] attempt
@@ -111,6 +114,8 @@ public interface ReceiveChannel<out E> {
      * Use [yield] or [CoroutineScope.isActive] to periodically check for cancellation in tight loops if needed.
      */
     public suspend fun receive(): E
+
+    public fun <R> SelectBuilder<R>.onReceive(block: suspend (E) -> R)
 
     /**
      * Retrieves and removes the element from this channel suspending the caller while this channel [isEmpty]

@@ -16,6 +16,7 @@
 
 package kotlinx.coroutines.experimental.channels
 
+import kotlinx.coroutines.experimental.select.SelectInstance
 import java.util.concurrent.locks.ReentrantLock
 
 /**
@@ -83,20 +84,25 @@ public class ArrayChannel<E>(
         return receive!!.offerResult
     }
 
-    // result is `E | POLL_EMPTY | Closed`
+    // result is `ALREADY_SELECTED | OFFER_SUCCESS | OFFER_FAILED | Closed`.
+    override fun offerSelectInternal(element: E, select: SelectInstance<*>): Any {
+        TODO("not implemented")
+    }
+
+    // result is `E | POLL_FAILED | Closed`
     override fun pollInternal(): Any? {
         var token: Any? = null
         var send: Send? = null
         var result: Any? = null
         locked {
             val size = this.size
-            if (size == 0) return closedForSend ?: POLL_EMPTY
+            if (size == 0) return closedForSend ?: POLL_FAILED
             // size > 0: not empty -- retrieve element
             result = buffer[head]
             buffer[head] = null
             this.size = size - 1 // update size before checking queue (!!!)
             // check for senders that were waiting on full queue
-            var replacement: Any? = POLL_EMPTY
+            var replacement: Any? = POLL_FAILED
             if (size == capacity) {
                 while (true) {
                     send = takeFirstSendOrPeekClosed() ?: break
@@ -107,7 +113,7 @@ public class ArrayChannel<E>(
                     }
                 }
             }
-            if (replacement !== POLL_EMPTY && !isClosed(replacement)) {
+            if (replacement !== POLL_FAILED && !isClosed(replacement)) {
                 this.size = size // restore size
                 buffer[(head + size) % capacity] = replacement
             }
@@ -117,5 +123,10 @@ public class ArrayChannel<E>(
         if (token != null)
             send!!.completeResumeSend(token!!)
         return result
+    }
+
+    // result is `ALREADY_SELECTED | E | POLL_FAILED | Closed`
+    override fun pollSelectInternal(select: SelectInstance<*>): Any? {
+        TODO("not implemented")
     }
 }
