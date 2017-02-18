@@ -35,7 +35,7 @@ public interface SelectableReceive<out E> {
     public fun <R> registerSelectReceive(select: SelectInstance<R>, block: suspend (E) -> R)
 }
 
-public interface SelectInstance<in R> {
+public interface SelectInstance<in R> : Continuation<R> {
     /**
      * Returns `true` when this [select] statement had already picked a clause to execute.
      */
@@ -46,8 +46,6 @@ public interface SelectInstance<in R> {
     public fun performAtomicTrySelect(desc: AtomicDesc): Any?
 
     public fun performAtomicIfNotSelected(desc: AtomicDesc): Any?
-
-    public val completion: Continuation<R>
 
     /**
      * Registers handler that is **synchronously** invoked on completion of this select instance.
@@ -71,8 +69,6 @@ internal class SelectBuilderImpl<in R>(
     delegate: Continuation<R>,
     parentJob: Job?
 ) : CancellableContinuationImpl<R>(delegate, parentJob, active = false), SelectBuilder<R>, SelectInstance<R> {
-    public override val completion: Continuation<R> get() = this
-
     public override fun trySelect(): Boolean = start()
 
     @PublishedApi

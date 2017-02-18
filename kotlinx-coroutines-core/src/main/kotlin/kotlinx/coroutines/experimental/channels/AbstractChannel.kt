@@ -229,7 +229,7 @@ public abstract class AbstractChannel<E> : Channel<E> {
                     offerResult === ALREADY_SELECTED -> return
                     offerResult === OFFER_FAILED -> {} // retry
                     offerResult === OFFER_SUCCESS -> {
-                        block.startUndispatchedCoroutine(select.completion)
+                        block.startUndispatchedCoroutine(select)
                         return
                     }
                     offerResult is Closed<*> -> throw offerResult.sendException
@@ -415,7 +415,7 @@ public abstract class AbstractChannel<E> : Channel<E> {
                     pollResult === POLL_FAILED -> {} // retry
                     pollResult is Closed<*> -> throw pollResult.receiveException
                     else -> {
-                        block.startUndispatchedCoroutine(pollResult as E, select.completion)
+                        block.startUndispatchedCoroutine(pollResult as E, select)
                         return
                     }
                 }
@@ -561,7 +561,7 @@ public abstract class AbstractChannel<E> : Channel<E> {
         override fun tryResumeSend(): Any? = if (select.trySelect()) SELECT_STARTED else null
         override fun completeResumeSend(token: Any) {
             check(token === SELECT_STARTED)
-            block.startCoroutine(select.completion)
+            block.startCoroutine(select)
         }
 
         fun removeOnSelectCompletion() {
@@ -656,10 +656,10 @@ public abstract class AbstractChannel<E> : Channel<E> {
         @Suppress("UNCHECKED_CAST")
         override fun completeResumeReceive(token: Any) {
             val value: E = (if (token === NULL_VALUE) null else token) as E
-            block.startCoroutine(value, select.completion)
+            block.startCoroutine(value, select)
         }
         override fun resumeReceiveClosed(closed: Closed<*>) {
-            select.completion.resumeWithException(closed.receiveException)
+            select.resumeWithException(closed.receiveException)
         }
 
         fun removeOnSelectCompletion() {
