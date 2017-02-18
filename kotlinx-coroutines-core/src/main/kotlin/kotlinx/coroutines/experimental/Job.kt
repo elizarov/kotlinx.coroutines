@@ -17,7 +17,6 @@
 package kotlinx.coroutines.experimental
 
 import kotlinx.coroutines.experimental.internal.*
-import kotlinx.coroutines.experimental.select.ALREADY_SELECTED
 import java.util.concurrent.Future
 import java.util.concurrent.atomic.AtomicReferenceFieldUpdater
 import kotlin.coroutines.experimental.AbstractCoroutineContextElement
@@ -636,6 +635,8 @@ public open class JobSupport(active: Boolean) : AbstractCoroutineContextElement(
      */
     public class Cancelled(cause: Throwable?) : CompletedExceptionally(cause)
 }
+
+internal val ALREADY_SELECTED: Any = Symbol("ALREADY_SELECTED")
 
 private val EmptyNew = Empty(false)
 private val EmptyActive = Empty(true)

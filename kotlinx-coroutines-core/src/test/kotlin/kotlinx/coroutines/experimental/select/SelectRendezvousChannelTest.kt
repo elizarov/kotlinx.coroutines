@@ -18,6 +18,7 @@ package kotlinx.coroutines.experimental.select
 
 import kotlinx.coroutines.experimental.TestBase
 import kotlinx.coroutines.experimental.channels.RendezvousChannel
+import kotlinx.coroutines.experimental.intrinsics.startUndispatchedCoroutine
 import kotlinx.coroutines.experimental.launch
 import kotlinx.coroutines.experimental.runBlocking
 import kotlinx.coroutines.experimental.yield
@@ -196,5 +197,40 @@ class SelectRendezvousChannelTest : TestBase() {
             }
         }
         finish(6)
+    }
+
+    @Test
+    fun testSelectSendResourceCleanup() = runBlocking<Unit> {
+        val channel = RendezvousChannel<Int>()
+        val n = 10_000_000
+        expect(1)
+        repeat(n) { i ->
+            select {
+                channel.onSend(i) { expectUnreached() }
+                default { expect(i + 2) }
+            }
+        }
+        finish(n + 2)
+    }
+
+    @Test
+    fun testSelectReceiveResourceCleanup() = runBlocking<Unit> {
+        val channel = RendezvousChannel<Int>()
+        val n = 10_000_000
+        expect(1)
+        repeat(n) { i ->
+            select {
+                channel.onReceive { v -> expectUnreached() }
+                default { expect(i + 2) }
+            }
+        }
+        finish(n + 2)
+    }
+
+    // only for debugging
+    internal fun <R> SelectBuilder<R>.default(block: suspend () -> R) {
+        this as SelectBuilderImpl // type assertion
+        if (!trySelect()) return
+        block.startUndispatchedCoroutine(completion)
     }
 }

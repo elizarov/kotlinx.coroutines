@@ -19,15 +19,12 @@ package kotlinx.coroutines.experimental.select
 import kotlinx.coroutines.experimental.*
 import kotlinx.coroutines.experimental.Job.Registration
 import kotlinx.coroutines.experimental.internal.AtomicDesc
-import kotlinx.coroutines.experimental.internal.Symbol
-import kotlinx.coroutines.experimental.intrinsics.startUndispatchedCoroutine
 import kotlin.coroutines.experimental.Continuation
 import kotlin.coroutines.experimental.intrinsics.suspendCoroutineOrReturn
 
 public interface SelectBuilder<in R> : CoroutineScope {
     public fun <E> SelectableSend<E>.onSend(element: E, block: suspend () -> R)
     public fun <E> SelectableReceive<E>.onReceive(block: suspend (E) -> R)
-    public fun default(block: suspend () -> R)
 }
 
 public interface SelectableSend<in E> {
@@ -57,8 +54,6 @@ public interface SelectInstance<in R> {
      */
     public fun invokeOnCompletion(handler: CompletionHandler): Registration
 }
-
-public val ALREADY_SELECTED: Any = Symbol("ALREADY_SELECTED")
 
 public inline suspend fun <R> select(crossinline builder: SelectBuilder<R>.() -> R): R =
     suspendCoroutineOrReturn { cont ->
@@ -103,8 +98,4 @@ internal class SelectBuilderImpl<in R>(
         registerSelectReceive(this@SelectBuilderImpl, block)
     }
 
-    override fun default(block: suspend () -> R) {
-        if (!trySelect()) return
-        block.startUndispatchedCoroutine(completion)
-    }
 }

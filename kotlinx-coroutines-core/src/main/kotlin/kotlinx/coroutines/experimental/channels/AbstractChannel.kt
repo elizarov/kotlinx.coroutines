@@ -16,14 +16,11 @@
 
 package kotlinx.coroutines.experimental.channels
 
-import kotlinx.coroutines.experimental.CancellableContinuation
+import kotlinx.coroutines.experimental.*
 import kotlinx.coroutines.experimental.internal.*
 import kotlinx.coroutines.experimental.intrinsics.startUndispatchedCoroutine
-import kotlinx.coroutines.experimental.removeOnCancel
-import kotlinx.coroutines.experimental.select.ALREADY_SELECTED
 import kotlinx.coroutines.experimental.select.SelectBuilder
 import kotlinx.coroutines.experimental.select.SelectInstance
-import kotlinx.coroutines.experimental.suspendCancellableCoroutine
 import kotlin.coroutines.experimental.startCoroutine
 
 /**
@@ -560,7 +557,7 @@ public abstract class AbstractChannel<E> : Channel<E> {
         override val pollResult: Any?,
         val select: SelectInstance<R>,
         val block: suspend () -> R
-    ) : LockFreeLinkedListNode(), Send {
+    ) : LockFreeLinkedListNode(), Send, CompletionHandler {
         override fun tryResumeSend(): Any? = if (select.trySelect()) SELECT_STARTED else null
         override fun completeResumeSend(token: Any) {
             check(token === SELECT_STARTED)
@@ -568,7 +565,11 @@ public abstract class AbstractChannel<E> : Channel<E> {
         }
 
         fun removeOnSelectCompletion() {
-            select.invokeOnCompletion { remove() }
+            select.invokeOnCompletion(this)
+        }
+
+        override fun invoke(cause: Throwable?) {
+            remove()
         }
     }
 
@@ -649,7 +650,7 @@ public abstract class AbstractChannel<E> : Channel<E> {
     private class ReceiveSelect<R, in E>(
         val select: SelectInstance<R>,
         val block: suspend (E) -> R
-    ) : Receive<E>() {
+    ) : Receive<E>(), CompletionHandler {
         override fun tryResumeReceive(value: E): Any?  =
             if (select.trySelect()) (value ?: NULL_VALUE) else null
         @Suppress("UNCHECKED_CAST")
@@ -662,7 +663,11 @@ public abstract class AbstractChannel<E> : Channel<E> {
         }
 
         fun removeOnSelectCompletion() {
-            select.invokeOnCompletion { remove() }
+            select.invokeOnCompletion(this)
+        }
+
+        override fun invoke(cause: Throwable?) {
+            remove()
         }
     }
 }
