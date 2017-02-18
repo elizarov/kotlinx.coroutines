@@ -23,7 +23,6 @@ import kotlinx.coroutines.experimental.removeOnCancel
 import kotlinx.coroutines.experimental.select.ALREADY_SELECTED
 import kotlinx.coroutines.experimental.select.SelectBuilder
 import kotlinx.coroutines.experimental.select.SelectInstance
-import kotlinx.coroutines.experimental.select.Selector
 import kotlinx.coroutines.experimental.suspendCancellableCoroutine
 import kotlin.coroutines.experimental.startCoroutine
 
@@ -215,44 +214,30 @@ public abstract class AbstractChannel<E> : Channel<E> {
         }
     }
 
-    // Result is ALREADY_SELECTED | ENQUEUE_SUCCESS | ENQUEUE_FAILED | Closed
-    fun <R> enqueueSelectSend(element: E, select: SelectInstance<R>, block: suspend () -> R): Any {
-        val enqueueOp = TryEnqueueSendDesc(element, select, block)
-        return select.performAtomicIfNotSelected(enqueueOp) ?: ENQUEUE_SUCCESS
-    }
-
-    private fun <R> offerSelect(element: E, select: SelectInstance<R>, block: suspend () -> R): Boolean {
-        val offerResult = offerSelectInternal(element, select)
-        when {
-            offerResult === ALREADY_SELECTED -> return true
-            offerResult === OFFER_FAILED -> return false
-            offerResult === OFFER_SUCCESS -> {
-                block.startUndispatchedCoroutine(select.completion)
-                return true
-            }
-            offerResult is Closed<*> -> throw offerResult.sendException
-            else -> error("offerSelectInternal returned $offerResult")
-        }
-    }
-
-    override fun <R> createSendSelector(element: E, block: suspend () -> R): Selector<R> = object : Selector<R> {
-        override fun trySelectFastPath(select: SelectInstance<R>): Boolean {
-            if (!offer(element)) return false
-            block.startUndispatchedCoroutine(select.completion)
-            return true
-        }
-
-        override fun registerSelector(select: SelectInstance<R>): Boolean {
-            while (true) {
-                val enqueueResult = enqueueSelectSend(element, select, block)
+    override fun <R> registerSelectSend(select: SelectInstance<R>, element: E, block: suspend () -> R) {
+        while (true) {
+            if (select.isSelected) return
+            if (isFull) {
+                val enqueueOp = TryEnqueueSendDesc(element, select, block)
+                val enqueueResult = select.performAtomicIfNotSelected(enqueueOp) ?: return
                 when {
-                    enqueueResult === ALREADY_SELECTED -> return true
-                    enqueueResult === ENQUEUE_SUCCESS -> return false
+                    enqueueResult === ALREADY_SELECTED -> return
                     enqueueResult === ENQUEUE_FAILED -> {} // retry
                     enqueueResult is Closed<*> -> throw enqueueResult.sendException
                     else -> error("enqueueSelectSend returned $enqueueResult")
                 }
-                if (offerSelect(element, select, block)) return true
+            } else {
+                val offerResult = offerSelectInternal(element, select)
+                when {
+                    offerResult === ALREADY_SELECTED -> return
+                    offerResult === OFFER_FAILED -> {} // retry
+                    offerResult === OFFER_SUCCESS -> {
+                        block.startUndispatchedCoroutine(select.completion)
+                        return
+                    }
+                    offerResult is Closed<*> -> throw offerResult.sendException
+                    else -> error("offerSelectInternal returned $offerResult")
+                }
             }
         }
     }
@@ -414,44 +399,29 @@ public abstract class AbstractChannel<E> : Channel<E> {
         }
     }
 
-    // Result is ALREADY_SELECTED | ENQUEUE_SUCCESS | ENQUEUE_FAILED
-    fun <R> enqueueSelectReceive(select: SelectInstance<R>, block: suspend (E) -> R): Any {
-        val enqueueOp = TryEnqueueReceiveDesc(select, block)
-        return select.performAtomicIfNotSelected(enqueueOp) ?: ENQUEUE_SUCCESS
-    }
-
     @Suppress("UNCHECKED_CAST")
-    private fun <R> pollSelect(select: SelectInstance<R>, block: suspend (E) -> R): Boolean {
-        val pollResult = pollSelectInternal(select)
-        when {
-            pollResult === ALREADY_SELECTED -> return true
-            pollResult === POLL_FAILED -> return false
-            pollResult is Closed<*> -> throw pollResult.receiveException
-            else -> {
-                block.startUndispatchedCoroutine(pollResult as E, select.completion)
-                return true
-            }
-        }
-    }
-
-    override fun <R> createReceiveSelector(block: suspend (E) -> R): Selector<R> = object : Selector<R> {
-        override fun trySelectFastPath(select: SelectInstance<R>): Boolean {
-            val result = pollInternal()
-            if (result === POLL_FAILED) return false
-            block.startUndispatchedCoroutine(receiveResult(result), select.completion)
-            return true
-        }
-
-        override fun registerSelector(select: SelectInstance<R>): Boolean {
-            while (true) {
-                val enqueueResult = enqueueSelectReceive(select, block)
+    override fun <R> registerSelectReceive(select: SelectInstance<R>, block: suspend (E) -> R) {
+        while (true) {
+            if (select.isSelected) return
+            if (isEmpty) {
+                val enqueueOp = TryEnqueueReceiveDesc(select, block)
+                val enqueueResult = select.performAtomicIfNotSelected(enqueueOp) ?: return
                 when {
-                    enqueueResult === ALREADY_SELECTED -> return true
-                    enqueueResult === ENQUEUE_SUCCESS -> return false
+                    enqueueResult === ALREADY_SELECTED -> return
                     enqueueResult === ENQUEUE_FAILED -> {} // retry
                     else -> error("enqueueSelectReceive returned $enqueueResult")
                 }
-                if (pollSelect(select, block)) return true
+            } else {
+                val pollResult = pollSelectInternal(select)
+                when {
+                    pollResult === ALREADY_SELECTED -> return
+                    pollResult === POLL_FAILED -> {} // retry
+                    pollResult is Closed<*> -> throw pollResult.receiveException
+                    else -> {
+                        block.startUndispatchedCoroutine(pollResult as E, select.completion)
+                        return
+                    }
+                }
             }
         }
     }
@@ -469,8 +439,6 @@ public abstract class AbstractChannel<E> : Channel<E> {
         @JvmStatic
         val POLL_FAILED: Any = Symbol("POLL_FAILED")
 
-        @JvmStatic
-        val ENQUEUE_SUCCESS: Any = Symbol("ENQUEUE_SUCCESS")
         @JvmStatic
         val ENQUEUE_FAILED: Any = Symbol("ENQUEUE_FAILED")
 

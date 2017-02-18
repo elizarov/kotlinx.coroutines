@@ -31,19 +31,11 @@ public interface SelectBuilder<in R> : CoroutineScope {
 }
 
 public interface SelectableSend<in E> {
-    public fun <R> createSendSelector(element: E, block: suspend () -> R): Selector<R>
+    public fun <R> registerSelectSend(select: SelectInstance<R>, element: E, block: suspend () -> R)
 }
 
 public interface SelectableReceive<out E> {
-    public fun <R> createReceiveSelector(block: suspend (E) -> R): Selector<R>
-}
-
-public interface Selector<out R> {
-    // is invoked on an instance that is not selected yet, returns `true` if selected to abort further action
-    public fun trySelectFastPath(select: SelectInstance<R>): Boolean
-
-    // can be invoked on already selected instance, returns `true` if selected to abort further action
-    public fun registerSelector(select: SelectInstance<R>): Boolean
+    public fun <R> registerSelectReceive(select: SelectInstance<R>, block: suspend (E) -> R)
 }
 
 public interface SelectInstance<in R> {
@@ -69,29 +61,21 @@ public interface SelectInstance<in R> {
 public val ALREADY_SELECTED: Any = Symbol("ALREADY_SELECTED")
 
 public inline suspend fun <R> select(crossinline builder: SelectBuilder<R>.() -> R): R =
-    selectInternal(true, builder)
-
-// used for debugging to check non-fast-path alternative
-@PublishedApi
-internal inline suspend fun <R> selectInternal(fastPath: Boolean, crossinline builder: SelectBuilder<R>.() -> R): R =
     suspendCoroutineOrReturn { cont ->
-        val scope = SelectBuilderImpl(fastPath, cont, getParentJobOrAbort(cont))
+        val scope = SelectBuilderImpl(cont, getParentJobOrAbort(cont))
         try {
             builder(scope)
         } catch (e: Throwable) {
             scope.handleBuilderException(e)
         }
-        scope.registerSelectors()
+        scope.initSelectResult()
     }
 
 @PublishedApi
 internal class SelectBuilderImpl<in R>(
-    val fastPath: Boolean,
     delegate: Continuation<R>,
     parentJob: Job?
 ) : CancellableContinuationImpl<R>(delegate, parentJob, active = false), SelectBuilder<R>, SelectInstance<R> {
-    private val selectors = arrayListOf<Selector<R>>()
-
     public override val completion: Continuation<R> get() = this
 
     public override fun trySelect(): Boolean = start()
@@ -105,41 +89,18 @@ internal class SelectBuilderImpl<in R>(
             handleCoroutineException(context, e)
     }
 
-    private fun trySelect(selector: Selector<R>) {
-        if (fastPath) {
-            if (selector.trySelectFastPath(this@SelectBuilderImpl)) return
-        } else {
-            if (selector.registerSelector(this@SelectBuilderImpl)) return
-        }
-        selectors += selector
-    }
-
     @PublishedApi
-    internal fun registerSelectors(): Any? {
-        if (!isSelected) {
-            initCancellability()
-            if (fastPath) { // we just tried with fast path -- need to select now
-                for (selector in selectors) {
-                    try {
-                        if (selector.registerSelector(this))
-                            break
-                    } catch (e: Throwable) {
-                        handleBuilderException(e)
-                    }
-                }
-            }
-        }
+    internal fun initSelectResult(): Any? {
+        if (!isSelected) initCancellability()
         return getResult()
     }
 
     override fun <E> SelectableSend<E>.onSend(element: E, block: suspend () -> R) {
-        if (isSelected) return
-        trySelect(createSendSelector(element, block))
+        registerSelectSend(this@SelectBuilderImpl, element, block)
     }
 
     override fun <E> SelectableReceive<E>.onReceive(block: suspend (E) -> R) {
-        if (isSelected) return
-        trySelect(createReceiveSelector(block))
+        registerSelectReceive(this@SelectBuilderImpl, block)
     }
 
     override fun default(block: suspend () -> R) {

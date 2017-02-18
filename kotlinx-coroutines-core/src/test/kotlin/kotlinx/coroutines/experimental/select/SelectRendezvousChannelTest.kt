@@ -23,20 +23,8 @@ import kotlinx.coroutines.experimental.runBlocking
 import kotlinx.coroutines.experimental.yield
 import org.junit.Assert.assertEquals
 import org.junit.Test
-import org.junit.runner.RunWith
-import org.junit.runners.Parameterized
 
-@RunWith(Parameterized::class)
-class SelectRendezvousChannelTest(val fastPath: Boolean) : TestBase() {
-    companion object {
-        @Parameterized.Parameters(name = "fastPath={0}")
-        @JvmStatic
-        fun params(): Collection<Array<Any>> = listOf(
-                arrayOf<Any>(false),
-                arrayOf<Any>(true)
-            )
-    }
-
+class SelectRendezvousChannelTest : TestBase() {
     @Test
     fun testSelectSendSuccess() = runBlocking<Unit> {
         expect(1)
@@ -48,7 +36,7 @@ class SelectRendezvousChannelTest(val fastPath: Boolean) : TestBase() {
         }
         yield() // to launched coroutine
         expect(3)
-        selectInternal<Unit>(fastPath) {
+        select<Unit> {
             channel.onSend("OK") {
                 expect(4)
             }
@@ -67,7 +55,7 @@ class SelectRendezvousChannelTest(val fastPath: Boolean) : TestBase() {
         }
         yield() // to launched coroutine
         expect(3)
-        selectInternal<Unit>(fastPath) {
+        select<Unit> {
             channel.onSend("OK") {
                 expect(4)
             }
@@ -82,7 +70,7 @@ class SelectRendezvousChannelTest(val fastPath: Boolean) : TestBase() {
     fun testSelectSendWaitWithDefault() = runBlocking<Unit> {
         expect(1)
         val channel = RendezvousChannel<String>()
-        selectInternal<Unit>(fastPath) {
+        select<Unit> {
             channel.onSend("OK") {
                 expectUnreached()
             }
@@ -114,7 +102,7 @@ class SelectRendezvousChannelTest(val fastPath: Boolean) : TestBase() {
             expect(4)
         }
         expect(2)
-        selectInternal<Unit>(fastPath) {
+        select<Unit> {
             channel.onSend("OK") {
                 expect(5)
             }
@@ -133,7 +121,7 @@ class SelectRendezvousChannelTest(val fastPath: Boolean) : TestBase() {
         }
         yield() // to launched coroutine
         expect(3)
-        selectInternal<Unit>(fastPath) {
+        select<Unit> {
             channel.onReceive { v ->
                 expect(4)
                 assertEquals("OK", v)
@@ -153,7 +141,7 @@ class SelectRendezvousChannelTest(val fastPath: Boolean) : TestBase() {
         }
         yield() // to launched coroutine
         expect(3)
-        selectInternal<Unit>(fastPath) {
+        select<Unit> {
             channel.onReceive { v ->
                 expect(4)
                 assertEquals("OK", v)
@@ -169,7 +157,7 @@ class SelectRendezvousChannelTest(val fastPath: Boolean) : TestBase() {
     fun testSelectReceiveWaitWithDefault() = runBlocking<Unit> {
         expect(1)
         val channel = RendezvousChannel<String>()
-        selectInternal<Unit>(fastPath) {
+        select<Unit> {
             channel.onReceive { v ->
                 expectUnreached()
             }
@@ -201,7 +189,7 @@ class SelectRendezvousChannelTest(val fastPath: Boolean) : TestBase() {
             expect(4)
         }
         expect(2)
-        selectInternal<Unit>(fastPath) {
+        select<Unit> {
             channel.onReceive { v ->
                 expect(5)
                 assertEquals("OK", v)
