@@ -57,8 +57,11 @@ public interface CancellableContinuation<in T> : Continuation<T>, Job {
      * Tries to resume this continuation with a given value and returns non-null object token if it was successful,
      * or `null` otherwise (it was already resumed or cancelled). When non-null object was returned,
      * [completeResume] must be invoked with it.
+     *
+     * When [idempotent] is not `null`, this function performs _idempotent_ operation, so that
+     * further invocations with the same non-null reference produce the same result.
      */
-    public fun tryResume(value: T): Any?
+    public fun tryResume(value: T, idempotent: Any? = null): Any?
 
     /**
      * Tries to resume this continuation with a given exception and returns non-null object token if it was successful,
@@ -166,6 +169,9 @@ internal open class CancellableContinuationImpl<in T>(
         const val RESUMED = 2
         const val YIELD = 3 // used by cancellable "yield"
         const val UNDISPATCHED = 4 // used by "undispatchedXXX"
+
+        @Suppress("UNCHECKED_CAST")
+        fun <T> getSuccessfulResult(state: Any?): T = if (state is CompletedIdempotentResult) state.result as T else state as T
     }
 
     override fun initCancellability() {
@@ -182,16 +188,22 @@ internal open class CancellableContinuationImpl<in T>(
         // otherwise, afterCompletion was already invoked, and the result is in the state
         val state = this.state
         if (state is CompletedExceptionally) throw state.exception
-        return state
+        return getSuccessfulResult(state)
     }
 
     override val isCancelled: Boolean get() = state is Cancelled
 
-    override fun tryResume(value: T): Any? {
+    override fun tryResume(value: T, idempotent: Any?): Any? {
         while (true) { // lock-free loop on state
             val state = this.state // atomic read
             when (state) {
-                is Incomplete -> if (tryUpdateState(state, value)) return state
+                is Incomplete -> {
+                    val idempotentStart = state.idempotentStart
+                    val update: Any? = if (idempotent == null && idempotentStart == null) value else
+                        CompletedIdempotentResult(idempotentStart, idempotent, value, state)
+                    if (tryUpdateState(state, update)) return state
+                }
+                is CompletedIdempotentResult -> return if (state.idempotentResume === idempotent) state.token else null
                 else -> return null // cannot resume -- not active anymore
             }
         }
@@ -201,7 +213,9 @@ internal open class CancellableContinuationImpl<in T>(
         while (true) { // lock-free loop on state
             val state = this.state // atomic read
             when (state) {
-                is Incomplete -> if (tryUpdateState(state, CompletedExceptionally(exception))) return state
+                is Incomplete -> {
+                    if (tryUpdateState(state, CompletedExceptionally(state.idempotentStart, exception))) return state
+                }
                 else -> return null // cannot resume -- not active anymore
             }
         }
@@ -211,7 +225,6 @@ internal open class CancellableContinuationImpl<in T>(
         completeUpdateState(token, state)
     }
 
-    @Suppress("UNCHECKED_CAST")
     override fun afterCompletion(state: Any?) {
         val decision = this.decision // volatile read
         if (decision == UNDECIDED && DECISION.compareAndSet(this, UNDECIDED, RESUMED)) return // will get result in getResult
@@ -219,18 +232,17 @@ internal open class CancellableContinuationImpl<in T>(
         when {
             decision == UNDISPATCHED -> undispatchedCompletion(state)
             state is CompletedExceptionally -> delegate.resumeWithException(state.exception)
-            decision == YIELD && delegate is DispatchedContinuation -> delegate.resumeYield(parentJob, state as T)
-            else -> delegate.resume(state as T)
+            decision == YIELD && delegate is DispatchedContinuation -> delegate.resumeYield(parentJob, getSuccessfulResult(state))
+            else -> delegate.resume(getSuccessfulResult(state))
         }
     }
 
-    @Suppress("UNCHECKED_CAST")
     private fun undispatchedCompletion(state: Any?) {
         delegate as DispatchedContinuation // type assertion -- was checked in resumeUndispatched
         if (state is CompletedExceptionally)
             delegate.resumeUndispatchedWithException(state.exception)
         else
-            delegate.resumeUndispatched(state as T)
+            delegate.resumeUndispatched(getSuccessfulResult(state))
     }
 
     // can only be invoked in the same thread as getResult (see "yield"), afterCompletion may be concurrent
@@ -252,5 +264,14 @@ internal open class CancellableContinuationImpl<in T>(
         check(dc.dispatcher === this) { "Must be invoked from the context CoroutineDispatcher"}
         DECISION.compareAndSet(this@CancellableContinuationImpl, SUSPENDED, UNDISPATCHED)
         resumeWithException(exception)
+    }
+
+    private class CompletedIdempotentResult(
+        idempotentStart: Any?,
+        @JvmField val idempotentResume: Any?,
+        @JvmField val result: Any?,
+        @JvmField val token: Incomplete
+    ) : CompletedIdempotentStart(idempotentStart) {
+        override fun toString(): String = "CompletedIdempotentResult[$result]"
     }
 }

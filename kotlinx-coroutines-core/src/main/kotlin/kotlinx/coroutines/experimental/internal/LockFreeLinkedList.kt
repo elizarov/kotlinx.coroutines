@@ -430,7 +430,9 @@ public open class LockFreeLinkedListNode {
                 val prepareOp = PrepareOp(next as Node, op, this)
                 if (NEXT.compareAndSet(affected, next, prepareOp)) {
                     // prepared -- complete preparations
-                    return prepareOp.perform(affected)
+                    val prepFail = prepareOp.perform(affected)
+                    if (prepFail === REMOVE_PREPARED) continue // retry
+                    return prepFail
                 }
             }
         }

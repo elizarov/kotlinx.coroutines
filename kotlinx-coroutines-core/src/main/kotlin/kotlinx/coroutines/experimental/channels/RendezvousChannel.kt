@@ -35,7 +35,7 @@ public open class RendezvousChannel<E> : AbstractChannel<E>() {
     protected final override fun offerInternal(element: E): Any {
         while (true) {
             val receive = takeFirstReceiveOrPeekClosed() ?: return OFFER_FAILED
-            val token = receive.tryResumeReceive(element)
+            val token = receive.tryResumeReceive(element, idempotent = null)
             if (token != null) {
                 receive.completeResumeReceive(token)
                 return receive.offerResult
@@ -58,7 +58,7 @@ public open class RendezvousChannel<E> : AbstractChannel<E>() {
     protected final override fun pollInternal(): Any? {
         while (true) {
             val send = takeFirstSendOrPeekClosed() ?: return POLL_FAILED
-            val token = send.tryResumeSend()
+            val token = send.tryResumeSend(idempotent = null)
             if (token != null) {
                 send.completeResumeSend(token)
                 return send.pollResult

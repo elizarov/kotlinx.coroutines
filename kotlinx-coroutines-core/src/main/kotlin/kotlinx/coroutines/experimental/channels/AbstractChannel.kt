@@ -164,7 +164,7 @@ public abstract class AbstractChannel<E> : Channel<E> {
     protected fun takeFirstReceiveOrPeekClosed(): ReceiveOrClosed<E>? =
         queue.removeFirstIfIsInstanceOfOrPeekIf<ReceiveOrClosed<E>>({ it is Closed<*> })
 
-    // ------ createSendSelector ------
+    // ------ registerSelectSend ------
 
     protected fun describeTryOffer(element: E): TryOfferDesc<E> = TryOfferDesc(element, queue)
 
@@ -181,7 +181,7 @@ public abstract class AbstractChannel<E> : Channel<E> {
         }
 
         override fun validatePrepared(node: ReceiveOrClosed<E>): Boolean {
-            val token = node.tryResumeReceive(element) ?: return false
+            val token = node.tryResumeReceive(element, this) ?: return false
             resumeToken = token
             return true
         }
@@ -350,7 +350,7 @@ public abstract class AbstractChannel<E> : Channel<E> {
     protected fun takeFirstSendOrPeekClosed(): Send? =
         queue.removeFirstIfIsInstanceOfOrPeekIf<Send> { it is Closed<*> }
 
-    // ------ createReceiveSelector ------
+    // ------ registerSelectReceive ------
 
     protected fun describeTryPoll(): TryPollDesc<E> = TryPollDesc(queue)
 
@@ -368,7 +368,7 @@ public abstract class AbstractChannel<E> : Channel<E> {
 
         @Suppress("UNCHECKED_CAST")
         override fun validatePrepared(node: Send): Boolean {
-            val token = node.tryResumeSend() ?: return false
+            val token = node.tryResumeSend(this) ?: return false
             resumeToken = token
             pollResult = node.pollResult as E
             return true
@@ -531,7 +531,7 @@ public abstract class AbstractChannel<E> : Channel<E> {
      */
     protected interface Send {
         val pollResult: Any? // E | Closed
-        fun tryResumeSend(): Any?
+        fun tryResumeSend(idempotent: Any?): Any?
         fun completeResumeSend(token: Any)
     }
 
@@ -540,7 +540,7 @@ public abstract class AbstractChannel<E> : Channel<E> {
      */
     protected interface ReceiveOrClosed<in E> {
         val offerResult: Any // OFFER_SUCCESS | Closed
-        fun tryResumeReceive(value: E): Any?
+        fun tryResumeReceive(value: E, idempotent: Any?): Any?
         fun completeResumeReceive(token: Any)
     }
 
@@ -549,7 +549,7 @@ public abstract class AbstractChannel<E> : Channel<E> {
             val cont: CancellableContinuation<Unit>,
             override val pollResult: Any?
     ) : LockFreeLinkedListNode(), Send {
-        override fun tryResumeSend(): Any? = cont.tryResume(Unit)
+        override fun tryResumeSend(idempotent: Any?): Any? = cont.tryResume(Unit, idempotent)
         override fun completeResumeSend(token: Any) = cont.completeResume(token)
     }
 
@@ -558,7 +558,9 @@ public abstract class AbstractChannel<E> : Channel<E> {
         val select: SelectInstance<R>,
         val block: suspend () -> R
     ) : LockFreeLinkedListNode(), Send, CompletionHandler {
-        override fun tryResumeSend(): Any? = if (select.trySelect()) SELECT_STARTED else null
+        override fun tryResumeSend(idempotent: Any?): Any? =
+            if (select.trySelect(idempotent)) SELECT_STARTED else null
+
         override fun completeResumeSend(token: Any) {
             check(token === SELECT_STARTED)
             block.startCoroutine(select)
@@ -595,9 +597,9 @@ public abstract class AbstractChannel<E> : Channel<E> {
 
         override val offerResult get() = this
         override val pollResult get() = this
-        override fun tryResumeSend(): Boolean = true
+        override fun tryResumeSend(idempotent: Any?): Boolean = true
         override fun completeResumeSend(token: Any) {}
-        override fun tryResumeReceive(value: E): Any? = throw sendException
+        override fun tryResumeReceive(value: E, idempotent: Any?): Any? = throw sendException
         override fun completeResumeReceive(token: Any) = throw sendException
     }
 
@@ -607,13 +609,13 @@ public abstract class AbstractChannel<E> : Channel<E> {
     }
 
     private class ReceiveNonNull<in E>(val cont: CancellableContinuation<E>) : Receive<E>() {
-        override fun tryResumeReceive(value: E): Any? = cont.tryResume(value)
+        override fun tryResumeReceive(value: E, idempotent: Any?): Any? = cont.tryResume(value, idempotent)
         override fun completeResumeReceive(token: Any) = cont.completeResume(token)
         override fun resumeReceiveClosed(closed: Closed<*>) = cont.resumeWithException(closed.receiveException)
     }
 
     private class ReceiveOrNull<in E>(val cont: CancellableContinuation<E?>) : Receive<E>() {
-        override fun tryResumeReceive(value: E): Any? = cont.tryResume(value)
+        override fun tryResumeReceive(value: E, idempotent: Any?): Any? = cont.tryResume(value, idempotent)
         override fun completeResumeReceive(token: Any) = cont.completeResume(token)
         override fun resumeReceiveClosed(closed: Closed<*>) {
             if (closed.closeCause == null)
@@ -627,8 +629,9 @@ public abstract class AbstractChannel<E> : Channel<E> {
         val iterator: Iterator<E>,
         val cont: CancellableContinuation<Boolean>
     ) : Receive<E>() {
-        override fun tryResumeReceive(value: E): Any? {
-            val token = cont.tryResume(true)
+        override fun tryResumeReceive(value: E, idempotent: Any?): Any? {
+            val token = cont.tryResume(true, idempotent)
+            // todo: stale idempotent resume?
             if (token != null) iterator.result = value
             return token
         }
@@ -651,13 +654,15 @@ public abstract class AbstractChannel<E> : Channel<E> {
         val select: SelectInstance<R>,
         val block: suspend (E) -> R
     ) : Receive<E>(), CompletionHandler {
-        override fun tryResumeReceive(value: E): Any?  =
-            if (select.trySelect()) (value ?: NULL_VALUE) else null
+        override fun tryResumeReceive(value: E, idempotent: Any?): Any?  =
+            if (select.trySelect(idempotent)) (value ?: NULL_VALUE) else null
+
         @Suppress("UNCHECKED_CAST")
         override fun completeResumeReceive(token: Any) {
             val value: E = (if (token === NULL_VALUE) null else token) as E
             block.startCoroutine(value, select)
         }
+
         override fun resumeReceiveClosed(closed: Closed<*>) {
             select.resumeWithException(closed.receiveException)
         }

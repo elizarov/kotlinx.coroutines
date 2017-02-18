@@ -75,7 +75,7 @@ public abstract class AbstractCoroutine<in T>(
         while (true) { // lock-free loop on state
             val state = this.state // atomic read
             when (state) {
-                is Incomplete -> if (updateState(state, CompletedExceptionally(exception))) return
+                is Incomplete -> if (updateState(state, CompletedExceptionally(state.idempotentStart, exception))) return
                 is Cancelled -> {
                     // ignore resumes on cancelled continuation, but handle exception if a different one is here
                     if (exception != state.exception) handleCoroutineException(context, exception)

@@ -17,12 +17,16 @@
 package kotlinx.coroutines.experimental.channels
 
 import kotlinx.coroutines.experimental.*
+import kotlinx.coroutines.experimental.select.select
+import org.junit.Assert.assertEquals
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.junit.runners.Parameterized
 import java.util.*
-import org.junit.Assert.*
 
+/**
+ * Tests cancel atomicity for channel send & receive operations, including their select versions.
+ */
 @RunWith(Parameterized::class)
 class ChannelAtomicCancelStressTest(val kind: TestChannelKind) {
     companion object {
@@ -61,15 +65,15 @@ class ChannelAtomicCancelStressTest(val kind: TestChannelKind) {
                     stopSender()
                     launchSender()
                 }
-                1 -> { // cancel & restrat receiver
-                    stopReceier()
+                1 -> { // cancel & restart receiver
+                    stopReceiver()
                     launchReceiver()
                 }
                 2 -> yield() // just yield (burn a little time)
             }
         }
         stopSender()
-        stopReceier()
+        stopReceiver()
         println("            Sent $lastSent ints to channel")
         println("        Received $lastReceived ints from channel")
         println("  Stopped sender $stoppedSender times")
@@ -83,10 +87,16 @@ class ChannelAtomicCancelStressTest(val kind: TestChannelKind) {
 
     fun launchSender() {
         sender = launch(CommonPool) {
+            val rnd = Random()
             try {
                 while (true) {
                     val trySend = lastSent + 1
-                    channel.send(trySend)
+                    when (rnd.nextInt(2)) {
+                        0 -> channel.send(trySend)
+                        1 -> select { channel.onSend(trySend) {} }
+                        else -> error("cannot happen")
+                    }
+
                     lastSent = trySend // update on success
                 }
             } finally {
@@ -103,9 +113,14 @@ class ChannelAtomicCancelStressTest(val kind: TestChannelKind) {
 
     fun launchReceiver() {
         receiver = launch(CommonPool) {
+            val rnd = Random()
             try {
                 while (true) {
-                    val received = channel.receive()
+                    val received = when (rnd.nextInt(2)) {
+                        0 -> channel.receive()
+                        1 -> select { channel.onReceive { it } }
+                        else -> error("cannot happen")
+                    }
                     val expected = lastReceived + 1
                     if (received > expected)
                         missedCnt++
@@ -119,7 +134,7 @@ class ChannelAtomicCancelStressTest(val kind: TestChannelKind) {
         }
     }
 
-    suspend fun stopReceier() {
+    suspend fun stopReceiver() {
         stoppedReceiver++
         receiver.cancel()
         receiverDone.receive()

@@ -41,7 +41,7 @@ public interface SelectInstance<in R> : Continuation<R> {
      */
     public val isSelected: Boolean
 
-    public fun trySelect(): Boolean
+    public fun trySelect(idempotent: Any?): Boolean
 
     public fun performAtomicTrySelect(desc: AtomicDesc): Any?
 
@@ -53,7 +53,7 @@ public interface SelectInstance<in R> : Continuation<R> {
     public fun invokeOnCompletion(handler: CompletionHandler): Registration
 }
 
-public inline suspend fun <R> select(crossinline builder: SelectBuilder<R>.() -> R): R =
+public inline suspend fun <R> select(crossinline builder: SelectBuilder<R>.() -> Unit): R =
     suspendCoroutineOrReturn { cont ->
         val scope = SelectBuilderImpl(cont, getParentJobOrAbort(cont))
         try {
@@ -69,8 +69,6 @@ internal class SelectBuilderImpl<in R>(
     delegate: Continuation<R>,
     parentJob: Job?
 ) : CancellableContinuationImpl<R>(delegate, parentJob, active = false), SelectBuilder<R>, SelectInstance<R> {
-    public override fun trySelect(): Boolean = start()
-
     @PublishedApi
     internal fun handleBuilderException(e: Throwable) {
         val token = tryResumeWithException(e)

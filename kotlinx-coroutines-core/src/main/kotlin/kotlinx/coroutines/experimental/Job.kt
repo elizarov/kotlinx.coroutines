@@ -378,21 +378,46 @@ public open class JobSupport(active: Boolean) : AbstractCoroutineContextElement(
     // return: 0 -> false (not new), 1 -> true (started), -1 -> retry
     internal fun startInternal(state: Any?): Int {
         when {
-            // EMPTY_NEW state -- no completion handlers, new
-            state === EmptyNew -> {
+            state === EmptyNew -> { // EMPTY_NEW state -- no completion handlers, new
                 if (!STATE.compareAndSet(this, state, EmptyActive)) return -1
                 onStart()
                 return 1
             }
-            // LIST -- a list of completion handlers (either new or active)
-            state is NodeList -> {
+            state is NodeList -> { // LIST -- a list of completion handlers (either new or active)
                 if (state.isActive) return 0
                 if (!NodeList.ACTIVE.compareAndSet(state, null, NodeList.ACTIVE_STATE)) return -1
                 onStart()
                 return 1
             }
-            // not a new state
-            else -> return 0
+            else -> return 0 // not a new state
+        }
+    }
+
+    // it is just like start(), but support idempotent start
+    public fun trySelect(idempotent: Any?): Boolean {
+        if (idempotent == null) return start() // non idempotent -- use plain start
+        check(idempotent !is OpDescriptor) { "cannot use OpDescriptor as idempotent marker"}
+        while (true) { // lock-free loop on state
+            val state = this.state
+            when {
+                state === EmptyNew -> { // EMPTY_NEW state -- no completion handlers, new
+                    // try to promote it to list in new state
+                    STATE.compareAndSet(this, state, NodeList(active = false))
+                }
+                state is NodeList -> { // LIST -- a list of completion handlers (either new or active)
+                    val active = state.active
+                    if (active === idempotent) return true // was activated with the same marker --> true
+                    if (active != null) return false
+                    if (NodeList.ACTIVE.compareAndSet(state, null, idempotent)) {
+                        onStart()
+                        return true
+                    }
+                }
+                state is CompletedIdempotentStart -> { // remembers idempotent start token
+                    return state.idempotentStart === idempotent
+                }
+                else -> return false
+            }
         }
     }
 
@@ -472,19 +497,16 @@ public open class JobSupport(active: Boolean) : AbstractCoroutineContextElement(
         while (true) { // lock-free loop on state
             val state = this.state
             when {
-                // EMPTY_ACTIVE state -- no completion handlers, active
-                state === EmptyActive -> {
+                state === EmptyActive -> { // EMPTY_ACTIVE state -- no completion handlers, active
                     // try move to SINGLE state
                     val node = nodeCache ?: makeNode(handler).also { nodeCache = it }
                     if (STATE.compareAndSet(this, state, node)) return node
                 }
-                // EMPTY_NEW state -- no completion handlers, new
-                state === EmptyNew -> {
+                state === EmptyNew -> { // EMPTY_NEW state -- no completion handlers, new
                     // try to promote it to list in new state
                     STATE.compareAndSet(this, state, NodeList(active = false))
                 }
-                // SINGLE/SINGLE+ state -- one completion handler
-                state is JobNode<*> -> {
+                state is JobNode<*> -> { // SINGLE/SINGLE+ state -- one completion handler
                     // try to promote it to list (SINGLE+ state)
                     state.addOneIfEmpty(NodeList(active = true))
                     // it must be in SINGLE+ state or state has changed (node could have need removed from state)
@@ -492,13 +514,11 @@ public open class JobSupport(active: Boolean) : AbstractCoroutineContextElement(
                     // just attempt converting it to list if state is still the same, then continue lock-free loop
                     STATE.compareAndSet(this, state, list)
                 }
-                // LIST -- a list of completion handlers (either new or active)
-                state is NodeList -> {
+                state is NodeList -> { // LIST -- a list of completion handlers (either new or active)
                     val node = nodeCache ?: makeNode(handler).also { nodeCache = it }
                     if (state.addLastIf(node) { this.state === state }) return node
                 }
-                // is inactive
-                else -> {
+                else -> { // is inactive
                     handler((state as? CompletedExceptionally)?.exception)
                     return EmptyRegistration
                 }
@@ -544,7 +564,7 @@ public open class JobSupport(active: Boolean) : AbstractCoroutineContextElement(
     final override fun cancel(cause: Throwable?): Boolean {
         while (true) { // lock-free loop on state
             val state = this.state as? Incomplete ?: return false // quit if already complete
-            if (updateState(state, Cancelled(cause))) return true
+            if (updateState(state, Cancelled(state.idempotentStart, cause))) return true
         }
     }
 
@@ -572,20 +592,29 @@ public open class JobSupport(active: Boolean) : AbstractCoroutineContextElement(
      */
     public interface Incomplete {
         val isActive: Boolean
+        val idempotentStart: Any? // != null if this state is a descendant of trySelect(idempotent)
     }
 
     private class NodeList(
         active: Boolean
     ) : LockFreeLinkedListHead(), Incomplete {
         @Volatile
+        @JvmField
         var _active: Any? = if (active) ACTIVE_STATE else null
 
-        override val isActive: Boolean get() {
+        val active: Any? get() {
             while (true) { // helper loop for atomic ops
                 val active = this._active
-                if (active !is OpDescriptor) return active != null
+                if (active !is OpDescriptor) return active
                 active.perform(this)
             }
+        }
+
+        override val isActive: Boolean get() = active != null
+
+        override val idempotentStart: Any? get() {
+            val active = this.active
+            return if (active === ACTIVE_STATE) null else active
         }
 
         companion object {
@@ -610,13 +639,20 @@ public open class JobSupport(active: Boolean) : AbstractCoroutineContextElement(
         }
     }
 
+    public open class CompletedIdempotentStart(
+        @JvmField val idempotentStart: Any?
+    )
+
     /**
      * Class for a [state] of a job that had completed exceptionally, including cancellation.
      *
      * @param cause the exceptional completion cause. If `cause` is null, then a [CancellationException]
      *        if created on first get from [exception] property.
      */
-    public open class CompletedExceptionally(val cause: Throwable?) {
+    public open class CompletedExceptionally(
+        idempotentStart: Any?,
+        @JvmField val cause: Throwable?
+    ) : CompletedIdempotentStart(idempotentStart) {
         @Volatile
         private var _exception: Throwable? = cause // materialize CancellationException on first need
 
@@ -633,7 +669,10 @@ public open class JobSupport(active: Boolean) : AbstractCoroutineContextElement(
     /**
      * A specific subclass of [CompletedExceptionally] for cancelled jobs.
      */
-    public class Cancelled(cause: Throwable?) : CompletedExceptionally(cause)
+    public class Cancelled(
+        idempotentStart: Any?,
+        cause: Throwable?
+    ) : CompletedExceptionally(idempotentStart, cause)
 }
 
 internal val ALREADY_SELECTED: Any = Symbol("ALREADY_SELECTED")
@@ -642,6 +681,7 @@ private val EmptyNew = Empty(false)
 private val EmptyActive = Empty(true)
 
 private class Empty(override val isActive: Boolean) : JobSupport.Incomplete {
+    override val idempotentStart: Any? get() = null
     override fun toString(): String = "Empty{${if (isActive) "Active" else "New" }}"
 }
 
@@ -649,6 +689,7 @@ internal abstract class JobNode<out J : Job>(
     val job: J
 ) : LockFreeLinkedListNode(), Job.Registration, CompletionHandler, JobSupport.Incomplete {
     final override val isActive: Boolean get() = true
+    final override val idempotentStart: Any? get() = null
     // if unregister is called on this instance, then Job was an instance of JobSupport that added this node it itself
     // directly without wrapping
     final override fun unregister() = (job as JobSupport).removeNode(this)

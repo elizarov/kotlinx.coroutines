@@ -66,7 +66,7 @@ public class ArrayChannel<E>(
                 if (size == 0) {
                     while (true) {
                         receive = takeFirstReceiveOrPeekClosed() ?: break // break when no receivers queued
-                        token = receive!!.tryResumeReceive(element)
+                        token = receive!!.tryResumeReceive(element, idempotent = null)
                         if (token != null) {
                             this.size = size // restore size
                             return@locked
@@ -106,7 +106,7 @@ public class ArrayChannel<E>(
             if (size == capacity) {
                 while (true) {
                     send = takeFirstSendOrPeekClosed() ?: break
-                    token = send!!.tryResumeSend()
+                    token = send!!.tryResumeSend(idempotent = null)
                     if (token != null) {
                         replacement = send!!.pollResult
                         break
