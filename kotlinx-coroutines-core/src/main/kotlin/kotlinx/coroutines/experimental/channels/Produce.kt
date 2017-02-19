@@ -102,9 +102,9 @@ public fun <E> buildChannel(
     produce(context, capacity, block)
 
 private class ProducerCoroutine<E>(
-    parentContext: CoroutineContext,
+    override val parentContext: CoroutineContext,
     override val channel: Channel<E>
-) : AbstractCoroutine<Unit>(parentContext, active = true), ProducerScope<E>, ProducerJob<E>, Channel<E> by channel {
+) : AbstractCoroutine<Unit>(active = true), ProducerScope<E>, ProducerJob<E>, Channel<E> by channel {
     override fun afterCompletion(state: Any?) {
         val cause = (state as? CompletedExceptionally)?.cause
         if (!channel.close(cause) && cause != null)

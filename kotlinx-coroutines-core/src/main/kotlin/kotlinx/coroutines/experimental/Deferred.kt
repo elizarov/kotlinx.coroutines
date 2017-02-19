@@ -118,9 +118,9 @@ public fun <T> defer(context: CoroutineContext, block: suspend CoroutineScope.()
     async(context, block = block)
 
 private open class DeferredCoroutine<T>(
-    parentContext: CoroutineContext,
+    override val parentContext: CoroutineContext,
     active: Boolean
-) : AbstractCoroutine<T>(parentContext, active), Deferred<T> {
+) : AbstractCoroutine<T>(active), Deferred<T> {
     override val isCompletedExceptionally: Boolean get() = state is CompletedExceptionally
     override val isCancelled: Boolean get() = state is Cancelled
 

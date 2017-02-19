@@ -49,16 +49,23 @@ public interface CoroutineScope {
  * implement completion [Continuation], [Job], and [CoroutineScope] interfaces.
  * It stores the result of continuation in the state of the job.
  *
- * @param parentContext the new context for the coroutine. Use [newCoroutineContext] to create it.
  * @param active when `true` coroutine is created in _active_ state, when `false` in _new_ state. See [Job] for details.
  * @suppress **This is unstable API and it is subject to change.**
  */
 public abstract class AbstractCoroutine<in T>(
-    parentContext: CoroutineContext,
     active: Boolean
 ) : JobSupport(active), Continuation<T>, CoroutineScope {
+    // context must be Ok for unsafe publishing (it is persistent),
+    // so we don't mark this _context variable as volatile, but leave potential benign race here
+    private var _context: CoroutineContext? = null // created on first need
+
     @Suppress("LeakingThis")
-    override val context: CoroutineContext = parentContext + this // merges this job into this context
+    public final override val context: CoroutineContext
+        get() = _context ?: createContext().also { _context = it }
+
+    protected abstract val parentContext: CoroutineContext
+
+    protected open fun createContext() = parentContext + this
 
     final override fun resume(value: T) {
         while (true) { // lock-free loop on state

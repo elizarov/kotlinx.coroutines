@@ -93,9 +93,9 @@ public fun <T> runBlocking(context: CoroutineContext = EmptyCoroutineContext, bl
 // --------------- implementation ---------------
 
 private open class StandaloneCoroutine(
-    val parentContext: CoroutineContext,
+    override val parentContext: CoroutineContext,
     active: Boolean
-) : AbstractCoroutine<Unit>(parentContext, active) {
+) : AbstractCoroutine<Unit>(active) {
     override fun afterCompletion(state: Any?) {
         // note the use of the parent's job context below!
         if (state is CompletedExceptionally) handleCoroutineException(parentContext, state.exception)
@@ -119,10 +119,10 @@ private class InnerCoroutine<in T>(
 }
 
 private class BlockingCoroutine<T>(
-    parentContext: CoroutineContext,
+    override val parentContext: CoroutineContext,
     val blockedThread: Thread,
     val hasPrivateEventLoop: Boolean
-) : AbstractCoroutine<T>(parentContext, active = true) {
+) : AbstractCoroutine<T>(active = true) {
     val eventLoop: EventLoop? = parentContext[ContinuationInterceptor] as? EventLoop
 
     override fun afterCompletion(state: Any?) {

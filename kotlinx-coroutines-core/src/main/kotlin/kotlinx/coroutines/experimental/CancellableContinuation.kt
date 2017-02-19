@@ -20,6 +20,7 @@ import kotlinx.coroutines.experimental.internal.LockFreeLinkedListNode
 import java.util.concurrent.atomic.AtomicIntegerFieldUpdater
 import kotlin.coroutines.experimental.Continuation
 import kotlin.coroutines.experimental.ContinuationInterceptor
+import kotlin.coroutines.experimental.CoroutineContext
 import kotlin.coroutines.experimental.intrinsics.COROUTINE_SUSPENDED
 import kotlin.coroutines.experimental.intrinsics.suspendCoroutineOrReturn
 import kotlin.coroutines.experimental.suspendCoroutine
@@ -151,11 +152,15 @@ private class RemoveOnCancel(
 
 @PublishedApi
 internal open class CancellableContinuationImpl<in T>(
+    @JvmField
     protected val delegate: Continuation<T>,
     active: Boolean
-) : AbstractCoroutine<T>(delegate.context, active), CancellableContinuation<T> {
+) : AbstractCoroutine<T>(active), CancellableContinuation<T> {
     @Volatile
     private var decision = UNDECIDED
+
+    override val parentContext: CoroutineContext
+        get() = delegate.context
 
     private companion object {
         val DECISION: AtomicIntegerFieldUpdater<CancellableContinuationImpl<*>> =

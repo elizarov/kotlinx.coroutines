@@ -94,8 +94,7 @@ internal class SelectBuilderImpl<in R>(
     }
 
     // coroutines that are started inside this select are directly subordinate to the parent job
-    override val context: CoroutineContext
-        get() = delegate.context
+    override fun createContext(): CoroutineContext = delegate.context
 
     override fun onParentCompletion(cause: Throwable?) {
         /*
