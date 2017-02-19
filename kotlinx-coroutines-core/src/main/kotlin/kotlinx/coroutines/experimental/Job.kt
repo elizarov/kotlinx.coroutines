@@ -290,10 +290,14 @@ public open class JobSupport(active: Boolean) : AbstractCoroutineContextElement(
             return
         }
         // directly pass HandlerNode to parent scope to optimize one closure object (see makeNode)
-        val newRegistration = parent.invokeOnCompletion(CancelOnCompletion(parent, this))
+        val newRegistration = parent.invokeOnCompletion(ParentOnCompletion(parent, this))
         registration = newRegistration
         // now check our state _after_ registering (see updateState order of actions)
         if (isCompleted) newRegistration.unregister()
+    }
+
+    internal open fun onParentCompletion(cause: Throwable?) {
+        cancel()
     }
 
     /**
@@ -439,14 +443,21 @@ public open class JobSupport(active: Boolean) : AbstractCoroutineContextElement(
             while (true) { // lock-free loop on state
                 val state = _state
                 when {
-                    state === this -> return null // already in progress
+                    state === this@AtomicSelectOp -> return null // already in progress
                     state is OpDescriptor -> state.perform(this@JobSupport) // help
                     state === EmptyNew -> { // EMPTY_NEW state -- no completion handlers, new
-                        if (STATE.compareAndSet(this@JobSupport, state, this)) return null // success
+                        if (STATE.compareAndSet(this@JobSupport, state, this@AtomicSelectOp)) return null // success
                     }
                     state is NodeList -> { // LIST -- a list of completion handlers (either new or active)
-                        if (state.isActive) return ALREADY_SELECTED
-                        if (NodeList.ACTIVE.compareAndSet(state, null, this)) return null // success
+                        val active = state._active
+                        when {
+                            active == null -> {
+                                if (NodeList.ACTIVE.compareAndSet(state, null, this@AtomicSelectOp)) return null // success
+                            }
+                            active === this@AtomicSelectOp -> return null // already in progress
+                            active is OpDescriptor -> active.perform(state) // help
+                            else -> return ALREADY_SELECTED // active state
+                        }
                     }
                     else -> return ALREADY_SELECTED // not a new state
                 }
@@ -726,6 +737,14 @@ private class CancelOnCompletion(
 ) : JobNode<Job>(parentJob) {
     override fun invoke(reason: Throwable?) { subordinateJob.cancel(reason) }
     override fun toString(): String = "CancelOnCompletion[$subordinateJob]"
+}
+
+private class ParentOnCompletion(
+    parentJob: Job,
+    val subordinateJob: JobSupport
+) : JobNode<Job>(parentJob) {
+    override fun invoke(reason: Throwable?) { subordinateJob.onParentCompletion(reason) }
+    override fun toString(): String = "ParentOnCompletion[$subordinateJob]"
 }
 
 private class CancelFutureOnCompletion(

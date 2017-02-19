@@ -60,6 +60,8 @@ public interface CancellableContinuation<in T> : Continuation<T>, Job {
      *
      * When [idempotent] is not `null`, this function performs _idempotent_ operation, so that
      * further invocations with the same non-null reference produce the same result.
+     *
+     * @suppress **This is unstable API and it is subject to change.**
      */
     public fun tryResume(value: T, idempotent: Any? = null): Any?
 
@@ -67,11 +69,15 @@ public interface CancellableContinuation<in T> : Continuation<T>, Job {
      * Tries to resume this continuation with a given exception and returns non-null object token if it was successful,
      * or `null` otherwise (it was already resumed or cancelled). When non-null object was returned,
      * [completeResume] must be invoked with it.
+     *
+     * @suppress **This is unstable API and it is subject to change.**
      */
     public fun tryResumeWithException(exception: Throwable): Any?
 
     /**
      * Completes the execution of [tryResume] or [tryResumeWithException] on its non-null result.
+     *
+     * @suppress **This is unstable API and it is subject to change.**
      */
     public fun completeResume(token: Any)
 
@@ -116,7 +122,7 @@ public inline suspend fun <T> suspendCancellableCoroutine(
     crossinline block: (CancellableContinuation<T>) -> Unit
 ): T =
     suspendCoroutineOrReturn { cont ->
-        val cancellable = CancellableContinuationImpl(cont, getParentJobOrAbort(cont), active = true)
+        val cancellable = CancellableContinuationImpl(cont, active = true)
         if (!holdCancellability) cancellable.initCancellability()
         block(cancellable)
         cancellable.getResult()
@@ -144,17 +150,8 @@ private class RemoveOnCancel(
 }
 
 @PublishedApi
-internal fun getParentJobOrAbort(cont: Continuation<*>): Job? {
-    val job = cont.context[Job]
-    // fast path when parent job is already complete (we don't even construct CancellableContinuationImpl object)
-    if (job != null && !job.isActive) throw job.getCompletionException()
-    return job
-}
-
-@PublishedApi
 internal open class CancellableContinuationImpl<in T>(
-    private val delegate: Continuation<T>,
-    private val parentJob: Job?,
+    protected val delegate: Continuation<T>,
     active: Boolean
 ) : AbstractCoroutine<T>(delegate.context, active), CancellableContinuation<T> {
     @Volatile
@@ -175,7 +172,7 @@ internal open class CancellableContinuationImpl<in T>(
     }
 
     override fun initCancellability() {
-        initParentJob(parentJob)
+        initParentJob(delegate.context[Job])
     }
 
     @PublishedApi
@@ -203,7 +200,13 @@ internal open class CancellableContinuationImpl<in T>(
                         CompletedIdempotentResult(idempotentStart, idempotent, value, state)
                     if (tryUpdateState(state, update)) return state
                 }
-                is CompletedIdempotentResult -> return if (state.idempotentResume === idempotent) state.token else null
+                is CompletedIdempotentResult -> {
+                    if (state.idempotentResume === idempotent) {
+                        check(state.result === value) { "Non-idempotent resume" }
+                        return state.token
+                    } else
+                        return null
+                }
                 else -> return null // cannot resume -- not active anymore
             }
         }
@@ -232,7 +235,9 @@ internal open class CancellableContinuationImpl<in T>(
         when {
             decision == UNDISPATCHED -> undispatchedCompletion(state)
             state is CompletedExceptionally -> delegate.resumeWithException(state.exception)
-            decision == YIELD && delegate is DispatchedContinuation -> delegate.resumeYield(parentJob, getSuccessfulResult(state))
+            decision == YIELD && delegate is DispatchedContinuation -> {
+                delegate.resumeYield(delegate.context[Job], getSuccessfulResult(state))
+            }
             else -> delegate.resume(getSuccessfulResult(state))
         }
     }
