@@ -36,11 +36,12 @@ class ChannelSendReceiveStressTest(
         @Parameterized.Parameters(name = "{0}, nSenders={1}, nReceivers={2}")
         @JvmStatic
         fun params(): Collection<Array<Any>> =
-                listOf(1, 2, 10).flatMap { nSenders ->
-                    listOf(1, 10).flatMap { nReceivers ->
-                        TestChannelKind.values().map { arrayOf<Any>(it, nSenders, nReceivers) }
-                    }
-                }
+            listOf(arrayOf(TestChannelKind.LINKED_LIST, 1, 1))
+//                listOf(1, 2, 10).flatMap { nSenders ->
+//                    listOf(1, 10).flatMap { nReceivers ->
+//                        TestChannelKind.values().map { arrayOf<Any>(it, nSenders, nReceivers) }
+//                    }
+//                }
     }
 
     val timeLimit = 30_000L * stressTestMultiplier // 30 sec
