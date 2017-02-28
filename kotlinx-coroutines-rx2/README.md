@@ -53,4 +53,4 @@ Conversion functions:
 
 # Package kotlinx.coroutines.experimental.rx2
 
-Utilities for [RxJava 1.x](https://github.com/ReactiveX/RxJava/tree/1.x).
+Utilities for [RxJava 2.x](https://github.com/ReactiveX/RxJava).

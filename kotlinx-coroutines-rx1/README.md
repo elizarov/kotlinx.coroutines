@@ -13,9 +13,7 @@ Suspending extension functions and suspending iteration:
 
 | **Name** | **Description**
 | -------- | ---------------
-| [Single.join][rx.Single.join] | Suspends coroutine until single is complete 
 | [Single.await][rx.Single.await] | Awaits for completion of the single value and returns it 
-| [Observable.join][rx.Observable.join] | Suspends coroutine until observable is complete 
 | [Observable.awaitFirst][rx.Observable.awaitFirst] | Returns the first value from the given observable
 | [Observable.awaitLast][rx.Observable.awaitFirst] | Returns the last value from the given observable
 | [Observable.awaitSingle][rx.Observable.awaitSingle] | Returns the single value from the given observable

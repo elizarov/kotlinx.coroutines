@@ -25,20 +25,6 @@ import rx.*
 // ------------------------ Single ------------------------
 
 /**
- * Suspends coroutine until this single is complete.
- * This invocation resumes normally (without exception) when this single is complete for any reason.
- *
- * This suspending function is cancellable. If the [Job] of the invoking coroutine is completed while this
- * suspending function is suspended, this function immediately resumes with [CancellationException].
- */
-public suspend fun <T> Single<T>.join(): Unit = suspendCancellableCoroutine { cont ->
-    cont.unsubscribeOnCompletion(subscribe(object : SingleSubscriber<T>() {
-        override fun onSuccess(t: T) { cont.resume(Unit) }
-        override fun onError(error: Throwable) { cont.resume(Unit) }
-    }))
-}
-
-/**
  * Awaits for completion of the single value without blocking a thread and
  * returns the resulting value or throws the corresponding exception if this single had produced error.
  *
@@ -54,22 +40,6 @@ public suspend fun <T> Single<T>.await(): T = suspendCancellableCoroutine { cont
 }
 
 // ------------------------ Observable ------------------------
-
-/**
- * Suspends coroutine until this observable is complete.
- * This invocation resumes normally (without exception) when this observable is complete for any reason.
- *
- * This suspending function is cancellable. If the [Job] of the invoking coroutine is completed while this
- * suspending function is suspended, this function immediately resumes with [CancellationException].
- */
-public suspend fun <T> Observable<T>.join(): Unit = suspendCancellableCoroutine { cont ->
-    cont.unsubscribeOnCompletion(subscribe(object : Subscriber<T>() {
-        override fun onStart() { request(Long.MAX_VALUE) }
-        override fun onNext(t: T) {}
-        override fun onCompleted() { cont.resume(Unit) }
-        override fun onError(e: Throwable) { cont.resume(Unit) }
-    }))
-}
 
 /**
  * Awaits for the first value from the given observable without blocking a thread and
@@ -113,5 +83,5 @@ private suspend fun <T> Observable<T>.awaitOne(): T = suspendCancellableCoroutin
 }
 
 private fun <T> CancellableContinuation<T>.unsubscribeOnCompletion(sub: Subscription) {
-    onCompletion { sub.unsubscribe() }
+    invokeOnCompletion { sub.unsubscribe() }
 }

@@ -16,14 +16,19 @@
 
 package kotlinx.coroutines.experimental.rx2
 
-import kotlinx.coroutines.experimental.*
+import io.reactivex.Flowable
+import io.reactivex.Observable
+import kotlinx.coroutines.experimental.AbstractCoroutine
+import kotlinx.coroutines.experimental.Job
 import kotlinx.coroutines.experimental.channels.ClosedSendChannelException
 import kotlinx.coroutines.experimental.channels.ProducerScope
 import kotlinx.coroutines.experimental.channels.SendChannel
-import io.reactivex.Observable
-import io.reactivex.Producer
-import io.reactivex.Subscriber
-import io.reactivex.Subscription
+import kotlinx.coroutines.experimental.handleCoroutineException
+import kotlinx.coroutines.experimental.newCoroutineContext
+import kotlinx.coroutines.experimental.selects.SelectInstance
+import kotlinx.coroutines.experimental.sync.Mutex
+import org.reactivestreams.Subscriber
+import org.reactivestreams.Subscription
 import java.util.concurrent.atomic.AtomicLongFieldUpdater
 import kotlin.coroutines.experimental.CoroutineContext
 import kotlin.coroutines.experimental.startCoroutine
@@ -45,19 +50,18 @@ import kotlin.coroutines.experimental.startCoroutine
 public fun <T> rxObservable(
     context: CoroutineContext,
     block: suspend ProducerScope<T>.() -> Unit
-): Observable<T> = Observable.create { subscriber ->
+): Flowable<T> = Flowable.fromPublisher { subscriber ->
     val newContext = newCoroutineContext(context)
     val coroutine = RxObservableCoroutine(newContext, subscriber)
     coroutine.initParentJob(context[Job])
-    subscriber.setProducer(coroutine) // do it first (before starting coroutine), to await unnecessary suspensions
-    subscriber.add(coroutine)
+    subscriber.onSubscribe(coroutine) // do it first (before starting coroutine), to await unnecessary suspensions
     block.startCoroutine(coroutine, coroutine)
 }
 
 private class RxObservableCoroutine<T>(
-    context: CoroutineContext,
+    override val parentContext: CoroutineContext,
     val subscriber: Subscriber<T>
-) : AbstractCoroutine<Unit>(context, true), ProducerScope<T>, Producer, Subscription {
+) : AbstractCoroutine<Unit>(true), ProducerScope<T>, Subscription {
     override val channel: SendChannel<T> get() = this
 
     // Mutex is locked when either nRequested == 0 or while subscriber.onXXX is being invoked
@@ -82,7 +86,7 @@ private class RxObservableCoroutine<T>(
     override fun close(cause: Throwable?): Boolean = cancel(cause)
 
     private fun sendException() =
-        (getState() as? CompletedExceptionally)?.cause ?: ClosedSendChannelException(CLOSED_MESSAGE)
+        (state as? CompletedExceptionally)?.cause ?: ClosedSendChannelException(CLOSED_MESSAGE)
 
     override fun offer(element: T): Boolean {
         if (!mutex.tryLock()) return false
@@ -101,6 +105,12 @@ private class RxObservableCoroutine<T>(
         mutex.lock()
         doLockedNext(element)
     }
+
+    override fun <R> registerSelectSend(select: SelectInstance<R>, element: T, block: suspend () -> R) =
+        mutex.registerSelectLock(select, null) {
+            doLockedNext(element)
+            block()
+        }
 
     // assert: mutex.isLocked()
     private fun doLockedNext(elem: T) {
@@ -149,12 +159,12 @@ private class RxObservableCoroutine<T>(
         try {
             if (nRequested >= CLOSED) {
                 nRequested = SIGNALLED // we'll signal onError/onCompleted (that the final state -- no CAS needed)
-                val state = getState()
+                val state = this.state
                 try {
                     if (state is CompletedExceptionally && state.cause != null)
                         subscriber.onError(state.cause)
                     else
-                        subscriber.onCompleted()
+                        subscriber.onComplete()
                 } catch (e: Throwable) {
                     handleCoroutineException(context, e)
                 }
@@ -184,7 +194,7 @@ private class RxObservableCoroutine<T>(
         }
     }
 
-    override fun afterCompletion(state: Any?) {
+    override fun afterCompletion(state: Any?, mode: Int) {
         while (true) { // lock-free loop for nRequested
             val cur = nRequested
             if (cur == SIGNALLED) return // some other thread holding lock already signalled completion
@@ -204,6 +214,5 @@ private class RxObservableCoroutine<T>(
     }
 
     // Subscription impl
-    override fun isUnsubscribed(): Boolean = isCompleted
-    override fun unsubscribe() { cancel() }
+    override fun cancel() { cancel(cause = null) }
 }

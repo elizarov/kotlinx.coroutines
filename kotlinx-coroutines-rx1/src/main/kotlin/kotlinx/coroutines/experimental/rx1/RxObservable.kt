@@ -20,6 +20,8 @@ import kotlinx.coroutines.experimental.*
 import kotlinx.coroutines.experimental.channels.ClosedSendChannelException
 import kotlinx.coroutines.experimental.channels.ProducerScope
 import kotlinx.coroutines.experimental.channels.SendChannel
+import kotlinx.coroutines.experimental.selects.SelectInstance
+import kotlinx.coroutines.experimental.sync.Mutex
 import rx.Observable
 import rx.Producer
 import rx.Subscriber
@@ -55,9 +57,9 @@ public fun <T> rxObservable(
 }
 
 private class RxObservableCoroutine<T>(
-    context: CoroutineContext,
+    override val parentContext: CoroutineContext,
     val subscriber: Subscriber<T>
-) : AbstractCoroutine<Unit>(context, true), ProducerScope<T>, Producer, Subscription {
+) : AbstractCoroutine<Unit>(true), ProducerScope<T>, Producer, Subscription {
     override val channel: SendChannel<T> get() = this
 
     // Mutex is locked when either nRequested == 0 or while subscriber.onXXX is being invoked
@@ -82,7 +84,7 @@ private class RxObservableCoroutine<T>(
     override fun close(cause: Throwable?): Boolean = cancel(cause)
 
     private fun sendException() =
-        (getState() as? CompletedExceptionally)?.cause ?: ClosedSendChannelException(CLOSED_MESSAGE)
+        (state as? CompletedExceptionally)?.cause ?: ClosedSendChannelException(CLOSED_MESSAGE)
 
     override fun offer(element: T): Boolean {
         if (!mutex.tryLock()) return false
@@ -101,6 +103,12 @@ private class RxObservableCoroutine<T>(
         mutex.lock()
         doLockedNext(element)
     }
+
+    override fun <R> registerSelectSend(select: SelectInstance<R>, element: T, block: suspend () -> R) =
+        mutex.registerSelectLock(select, null) {
+            doLockedNext(element)
+            block()
+        }
 
     // assert: mutex.isLocked()
     private fun doLockedNext(elem: T) {
@@ -149,7 +157,7 @@ private class RxObservableCoroutine<T>(
         try {
             if (nRequested >= CLOSED) {
                 nRequested = SIGNALLED // we'll signal onError/onCompleted (that the final state -- no CAS needed)
-                val state = getState()
+                val state = this.state
                 try {
                     if (state is CompletedExceptionally && state.cause != null)
                         subscriber.onError(state.cause)
@@ -184,7 +192,7 @@ private class RxObservableCoroutine<T>(
         }
     }
 
-    override fun afterCompletion(state: Any?) {
+    override fun afterCompletion(state: Any?, mode: Int) {
         while (true) { // lock-free loop for nRequested
             val cur = nRequested
             if (cur == SIGNALLED) return // some other thread holding lock already signalled completion

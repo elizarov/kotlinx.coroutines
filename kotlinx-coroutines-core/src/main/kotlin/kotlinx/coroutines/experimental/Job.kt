@@ -139,10 +139,6 @@ public interface Job : CoroutineContext.Element {
      * cancelled as a result of this invocation and `false` otherwise
      * (if it was already _completed_ or if it is [NonCancellable]).
      * Repeated invocations of this function have no effect and always produce `false`.
-     *
-     * When cancellation has a clear reason in the code, an instance of [CancellationException] should be created
-     * at the corresponding original cancellation site and passed into this method to aid in debugging by providing
-     * both the context of cancellation and text description of the reason.
      */
     public fun cancel(cause: Throwable? = null): Boolean
 

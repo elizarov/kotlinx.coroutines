@@ -19,12 +19,15 @@ package kotlinx.coroutines.experimental.rx2
 import kotlinx.coroutines.experimental.channels.ReceiveChannel
 import kotlinx.coroutines.experimental.channels.RendezvousChannel
 import io.reactivex.Observable
-import io.reactivex.Subscriber
-import io.reactivex.Subscription
+import io.reactivex.ObservableSource
+import io.reactivex.Observer
+import io.reactivex.disposables.Disposable
+import io.reactivex.functions.Consumer
+import org.reactivestreams.Subscription
 
 /**
  * Return type for [Observable.open] that can be used to [receive] elements from the
- * subscription and to manually [unsubscribe] from it.
+ * subscription and to manually [cancel] it.
  */
 public interface SubscriptionReceiveChannel<out T> : ReceiveChannel<T>, Subscription
 
@@ -36,7 +39,7 @@ public interface SubscriptionReceiveChannel<out T> : ReceiveChannel<T>, Subscrip
  * So, albeit that resulting channel returned by this function supports cancellation of
  * receive invocations, a cancelled receive forces the whole subscription channel to be closed.
  */
-public fun <T> Observable<T>.open(): SubscriptionReceiveChannel<T> {
+public fun <T> ObservableSource<T>.open(): SubscriptionReceiveChannel<T> {
     val channel = SubscriptionChannel<T>()
     val subscription = subscribe(channel.subscriber)
     channel.subscription = subscription
@@ -64,24 +67,23 @@ private class SubscriptionChannel<T> : RendezvousChannel<T>(), SubscriptionRecei
     override fun afterClose(cause: Throwable?) { subscription?.unsubscribe() }
 
     // Subscription overrides
-    override fun unsubscribe() { close() }
-    override fun isUnsubscribed(): Boolean = isClosedForSend
+    override fun cancel() { close() }
 
-    inner class ChannelSubscriber: Subscriber<T>() {
+    inner class ChannelSubscriber: Observer<T>() {
         fun requestOne() {
             request(1)
         }
 
-        override fun onStart() {
-            request(0) // init backpressure, but don't request anything yet
+        override fun onSubscribe(d: Disposable) {
+            // todo:
         }
 
         override fun onNext(t: T) {
             check(offer(t)) { "Unrequested onNext invocation with $t" }
         }
 
-        override fun onCompleted() {
-            check(close()) { "onCompleted on a closed channel"}
+        override fun onComplete() {
+            check(close()) { "onComplete on a closed channel"}
         }
 
         override fun onError(e: Throwable?) {

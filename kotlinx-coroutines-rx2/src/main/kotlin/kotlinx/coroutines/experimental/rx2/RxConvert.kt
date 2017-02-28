@@ -22,7 +22,8 @@ import kotlinx.coroutines.experimental.channels.ReceiveChannel
 import kotlinx.coroutines.experimental.launch
 import io.reactivex.Observable
 import io.reactivex.Single
-import io.reactivex.Subscription
+import io.reactivex.functions.Cancellable
+import org.reactivestreams.Subscription
 import kotlin.coroutines.experimental.CoroutineContext
 
 /**
@@ -43,7 +44,7 @@ public fun <T> Deferred<T>.toSingle(context: CoroutineContext): Single<T> = Sing
             }
         sub.onSuccess(t)
     }
-    sub.add(JobSubscription(job))
+    sub.setCancellable(JobCancellable(job))
 }
 
 /**
@@ -68,12 +69,11 @@ public fun <T> ReceiveChannel<T>.toObservable(context: CoroutineContext): Observ
             sub.onError(e)
             return@launch
         }
-        sub.onCompleted()
+        sub.onComplete()
     }
-    sub.add(JobSubscription(job))
+    sub.setCancellable(JobCancellable(job))
 }
 
-private class JobSubscription(val job: Job) : Subscription {
-    override fun isUnsubscribed(): Boolean = job.isCompleted
-    override fun unsubscribe() { job.cancel() }
+private class JobCancellable(val job: Job) : Cancellable {
+    override fun cancel() { job.cancel() }
 }

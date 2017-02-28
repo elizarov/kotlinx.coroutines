@@ -16,13 +16,13 @@
 
 package kotlinx.coroutines.experimental.rx2
 
+import io.reactivex.Single
+import io.reactivex.SingleEmitter
+import io.reactivex.functions.Cancellable
 import kotlinx.coroutines.experimental.AbstractCoroutine
 import kotlinx.coroutines.experimental.CoroutineScope
 import kotlinx.coroutines.experimental.Job
 import kotlinx.coroutines.experimental.newCoroutineContext
-import io.reactivex.Single
-import io.reactivex.SingleSubscriber
-import io.reactivex.Subscription
 import kotlin.coroutines.experimental.CoroutineContext
 import kotlin.coroutines.experimental.startCoroutine
 
@@ -43,23 +43,22 @@ public fun <T> rxSingle(
     val newContext = newCoroutineContext(context)
     val coroutine = RxSingleCoroutine(newContext, subscriber)
     coroutine.initParentJob(context[Job])
-    subscriber.add(coroutine)
+    subscriber.setCancellable(coroutine)
     block.startCoroutine(coroutine, coroutine)
 }
 
 private class RxSingleCoroutine<T>(
-    context: CoroutineContext,
-    val subscriber: SingleSubscriber<T>
-) : AbstractCoroutine<T>(context, true), Subscription {
+    override val parentContext: CoroutineContext,
+    val subscriber: SingleEmitter<T>
+) : AbstractCoroutine<T>(true), Cancellable {
     @Suppress("UNCHECKED_CAST")
-    override fun afterCompletion(state: Any?) {
+    override fun afterCompletion(state: Any?, mode: Int) {
         if (state is CompletedExceptionally)
             subscriber.onError(state.exception)
         else
             subscriber.onSuccess(state as T)
     }
 
-    // Subscription impl
-    override fun isUnsubscribed(): Boolean = isCompleted
-    override fun unsubscribe() { cancel() }
+    // Cancellable impl
+    override fun cancel() { cancel(cause = null) }
 }
