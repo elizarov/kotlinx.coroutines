@@ -14,25 +14,27 @@
  * limitations under the License.
  */
 
-package kotlinx.coroutines.experimental.rx1
+package kotlinx.coroutines.experimental.reactive
 
-import kotlinx.coroutines.experimental.*
+import kotlinx.coroutines.experimental.AbstractCoroutine
+import kotlinx.coroutines.experimental.Job
 import kotlinx.coroutines.experimental.channels.ClosedSendChannelException
 import kotlinx.coroutines.experimental.channels.ProducerScope
 import kotlinx.coroutines.experimental.channels.SendChannel
+import kotlinx.coroutines.experimental.handleCoroutineException
+import kotlinx.coroutines.experimental.newCoroutineContext
 import kotlinx.coroutines.experimental.selects.SelectInstance
 import kotlinx.coroutines.experimental.sync.Mutex
-import rx.Observable
-import rx.Producer
-import rx.Subscriber
-import rx.Subscription
+import org.reactivestreams.Publisher
+import org.reactivestreams.Subscriber
+import org.reactivestreams.Subscription
 import java.util.concurrent.atomic.AtomicLongFieldUpdater
 import kotlin.coroutines.experimental.CoroutineContext
 import kotlin.coroutines.experimental.startCoroutine
 
 /**
- * Creates cold [Observable] that runs a given [block] in a coroutine.
- * Every time the returned observable is subscribed, it starts a new coroutine in the specified [context].
+ * Creates cold reactive [Publisher] that runs a given [block] in a coroutine.
+ * Every time the returned publisher is subscribed, it starts a new coroutine in the specified [context].
  * Coroutine emits items with `send`. Unsubscribing cancels running coroutine.
  *
  * Invocations of `send` are suspended appropriately when subscribers apply back-pressure and to ensure that
@@ -41,25 +43,24 @@ import kotlin.coroutines.experimental.startCoroutine
  * | **Coroutine action**                         | **Signal to subscriber**
  * | -------------------------------------------- | ------------------------
  * | `send`                                       | `onNext`
- * | Normal completion or `close` without cause   | `onCompleted`
+ * | Normal completion or `close` without cause   | `onComplete`
  * | Failure with exception or `close` with cause | `onError`
  */
-public fun <T> rxObservable(
+public fun <T> publish(
     context: CoroutineContext,
     block: suspend ProducerScope<T>.() -> Unit
-): Observable<T> = Observable.create { subscriber ->
+): Publisher<T> = Publisher<T> { subscriber ->
     val newContext = newCoroutineContext(context)
-    val coroutine = RxObservableCoroutine(newContext, subscriber)
+    val coroutine = PublisherCoroutine(newContext, subscriber)
     coroutine.initParentJob(context[Job])
-    subscriber.setProducer(coroutine) // do it first (before starting coroutine), to avoid unnecessary suspensions
-    subscriber.add(coroutine)
+    subscriber.onSubscribe(coroutine) // do it first (before starting coroutine), to avoid unnecessary suspensions
     block.startCoroutine(coroutine, coroutine)
 }
 
-private class RxObservableCoroutine<T>(
+private class PublisherCoroutine<T>(
     override val parentContext: CoroutineContext,
     private val subscriber: Subscriber<T>
-) : AbstractCoroutine<Unit>(true), ProducerScope<T>, Producer, Subscription {
+) : AbstractCoroutine<Unit>(true), ProducerScope<T>, Subscription {
     override val channel: SendChannel<T> get() = this
 
     // Mutex is locked when either nRequested == 0 or while subscriber.onXXX is being invoked
@@ -71,7 +72,7 @@ private class RxObservableCoroutine<T>(
     companion object {
         @JvmStatic
         private val N_REQUESTED = AtomicLongFieldUpdater
-                .newUpdater(RxObservableCoroutine::class.java, "nRequested")
+                .newUpdater(PublisherCoroutine::class.java, "nRequested")
 
         private const val CLOSED_MESSAGE = "This subscription had already closed (completed or failed)"
 
@@ -162,7 +163,7 @@ private class RxObservableCoroutine<T>(
                     if (state is CompletedExceptionally && state.cause != null)
                         subscriber.onError(state.cause)
                     else
-                        subscriber.onCompleted()
+                        subscriber.onComplete()
                 } catch (e: Throwable) {
                     handleCoroutineException(context, e)
                 }
@@ -212,6 +213,7 @@ private class RxObservableCoroutine<T>(
     }
 
     // Subscription impl
-    override fun isUnsubscribed(): Boolean = isCompleted
-    override fun unsubscribe() { cancel() }
+    override fun cancel() {
+        cancel(cause = null)
+    }
 }

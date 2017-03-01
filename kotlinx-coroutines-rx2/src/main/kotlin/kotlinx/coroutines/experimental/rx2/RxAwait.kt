@@ -68,7 +68,7 @@ public suspend fun <T> SingleSource<T>.await(): T = suspendCancellableCoroutine 
  * If the [Job] of the current coroutine is completed while this suspending function is waiting, this function
  * immediately resumes with [CancellationException].
  */
-public suspend fun <T> Observable<T>.awaitFirst(): T = firstOrError().await()
+public suspend fun <T> ObservableSource<T>.awaitFirst(): T = awaitOne(Mode.FIRST)
 
 /**
  * Awaits for the last value from the given observable without blocking a thread.
@@ -78,7 +78,7 @@ public suspend fun <T> Observable<T>.awaitFirst(): T = firstOrError().await()
  * If the [Job] of the current coroutine is completed while this suspending function is waiting, this function
  * immediately resumes with [CancellationException].
  */
-public suspend fun <T> Observable<T>.awaitLast(): T = lastOrError().await()
+public suspend fun <T> ObservableSource<T>.awaitLast(): T = awaitOne(Mode.LAST)
 
 /**
  * Awaits for the single value from the given observable without blocking a thread.
@@ -88,42 +88,64 @@ public suspend fun <T> Observable<T>.awaitLast(): T = lastOrError().await()
  * If the [Job] of the current coroutine is completed while this suspending function is waiting, this function
  * immediately resumes with [CancellationException].
  */
-public suspend fun <T> Observable<T>.awaitSingle(): T = singleOrError().await()
-
-// ------------------------ Publisher ------------------------
-
-/**
- * Awaits for the first value from the given flowable without blocking a thread.
- * Returns the resulting value or throws the corresponding exception if this flowable had produced error.
- *
- * This suspending function is cancellable.
- * If the [Job] of the current coroutine is completed while this suspending function is waiting, this function
- * immediately resumes with [CancellationException].
- */
-public suspend fun <T> Flowable<T>.awaitFirst(): T = firstOrError().await()
-
-/**
- * Awaits for the last value from the given flowable without blocking a thread.
- * Returns the resulting value or throws the corresponding exception if this flowable had produced error.
- *
- * This suspending function is cancellable.
- * If the [Job] of the current coroutine is completed while this suspending function is waiting, this function
- * immediately resumes with [CancellationException].
- */
-public suspend fun <T> Flowable<T>.awaitLast(): T = lastOrError().await()
-
-/**
- * Awaits for the single value from the given flowable without blocking a thread.
- * Returns the resulting value or throws the corresponding exception if this flowable had produced error.
- *
- * This suspending function is cancellable.
- * If the [Job] of the current coroutine is completed while this suspending function is waiting, this function
- * immediately resumes with [CancellationException].
- */
-public suspend fun <T> Flowable<T>.awaitSingle(): T = singleOrError().await()
+public suspend fun <T> ObservableSource<T>.awaitSingle(): T = awaitOne(Mode.SINGLE)
 
 // ------------------------ private ------------------------
 
-private fun CancellableContinuation<*>.disposeOnCompletion(d: Disposable) {
+private fun CancellableContinuation<*>.disposeOnCompletion(d: Disposable) =
     invokeOnCompletion { d.dispose() }
+
+private enum class Mode(val s: String) {
+    FIRST("awaitFirst"),
+    LAST("awaitLast"),
+    SINGLE("awaitSingle");
+    override fun toString(): String = s
 }
+
+private suspend fun <T> ObservableSource<T>.awaitOne(mode: Mode): T = suspendCancellableCoroutine { cont ->
+    subscribe(object : Observer<T> {
+        private lateinit var subscription: Disposable
+        private var value: T? = null
+        private var seenValue = false
+
+        override fun onSubscribe(sub: Disposable) {
+            subscription = sub
+            cont.invokeOnCompletion { sub.dispose() }
+        }
+
+        override fun onNext(t: T) {
+            when (mode) {
+                Mode.FIRST -> {
+                    seenValue = true
+                    cont.resume(t)
+                    subscription.dispose()
+                }
+                Mode.LAST, Mode.SINGLE -> {
+                    if (mode == Mode.SINGLE && seenValue) {
+                        if (cont.isActive)
+                            cont.resumeWithException(IllegalArgumentException("More that one onNext value for $mode"))
+                        subscription.dispose()
+                    } else {
+                        value = t
+                        seenValue = true
+                    }
+                }
+            }
+        }
+
+        override fun onComplete() {
+            if (!seenValue) {
+                if (cont.isActive)
+                    cont.resumeWithException(NoSuchElementException("No value received via onNext for $mode"))
+                return
+            }
+            if (!cont.isActive) return // was already resumed
+            cont.resume(value as T)
+        }
+
+        override fun onError(e: Throwable) {
+            cont.resumeWithException(e)
+        }
+    })
+}
+

@@ -27,8 +27,8 @@ import kotlin.coroutines.experimental.CoroutineContext
 import kotlin.coroutines.experimental.startCoroutine
 
 /**
- * Creates cold [single][Single] that will run a given [block] in a coroutine.
- * Every time the returned observable is subscribed, it starts a new coroutine in the specified [context].
+ * Creates cold [Single] that runs a given [block] in a coroutine.
+ * Every time the returned single is subscribed, it starts a new coroutine in the specified [context].
  * Coroutine returns a single value. Unsubscribing cancels running coroutine.
  *
  * | **Coroutine action**                  | **Signal to subscriber**
@@ -49,7 +49,7 @@ public fun <T> rxSingle(
 
 private class RxSingleCoroutine<T>(
     override val parentContext: CoroutineContext,
-    val subscriber: SingleSubscriber<T>
+    private val subscriber: SingleSubscriber<T>
 ) : AbstractCoroutine<T>(true), Subscription {
     @Suppress("UNCHECKED_CAST")
     override fun afterCompletion(state: Any?, mode: Int) {

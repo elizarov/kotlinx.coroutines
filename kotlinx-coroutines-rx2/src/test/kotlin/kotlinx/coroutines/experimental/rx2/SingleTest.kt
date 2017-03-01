@@ -23,12 +23,79 @@ import org.junit.Assert.fail
 import org.junit.Test
 import io.reactivex.Observable
 import io.reactivex.Single
+import kotlinx.coroutines.experimental.TestBase
+import kotlinx.coroutines.experimental.yield
+import org.hamcrest.core.IsEqual
+import org.hamcrest.core.IsInstanceOf
+import org.junit.Assert
+import java.util.concurrent.CancellationException
 import java.util.concurrent.TimeUnit
 
 /**
  * Tests emitting single item with [rxSingle].
  */
-class SingleTest {
+class SingleTest : TestBase() {
+    @Test
+    fun testBasicSuccess() = runBlocking<Unit> {
+        expect(1)
+        val single = rxSingle(context) {
+            expect(4)
+            "OK"
+        }
+        expect(2)
+        single.subscribe { value ->
+            expect(5)
+            Assert.assertThat(value, IsEqual("OK"))
+        }
+        expect(3)
+        yield() // to started coroutine
+        finish(6)
+    }
+
+    @Test
+    fun testBasicFailure() = runBlocking<Unit> {
+        expect(1)
+        val single = rxSingle(context) {
+            expect(4)
+            throw RuntimeException("OK")
+        }
+        expect(2)
+        single.subscribe({
+            expectUnreached()
+        }, { error ->
+            expect(5)
+            Assert.assertThat(error, IsInstanceOf(RuntimeException::class.java))
+            Assert.assertThat(error.message, IsEqual("OK"))
+        })
+        expect(3)
+        yield() // to started coroutine
+        finish(6)
+    }
+
+
+    @Test
+    fun testBasicUnsubscribe() = runBlocking<Unit> {
+        expect(1)
+        val single = rxSingle(context) {
+            expect(4)
+            yield() // back to main, will get cancelled
+            expectUnreached()
+        }
+        expect(2)
+        // nothing is called on a disposed rx2 single
+        val sub = single.subscribe({
+            expectUnreached()
+        }, {
+            expectUnreached()
+        })
+        expect(3)
+        yield() // to started coroutine
+        expect(5)
+        sub.dispose() // will cancel coroutine
+        yield()
+        finish(6)
+    }
+
     @Test
     fun testSingleNoWait() {
         val single = rxSingle(CommonPool) {
@@ -37,17 +104,6 @@ class SingleTest {
 
         checkSingleValue(single) {
             assertEquals("OK", it)
-        }
-    }
-
-    @Test
-    fun testSingleNullNoWait() {
-        val single = rxSingle<String?>(CommonPool) {
-            null
-        }
-
-        checkSingleValue(single) {
-            assertEquals(null, it)
         }
     }
 
@@ -129,7 +185,7 @@ class SingleTest {
     @Test
     fun testExceptionFromCoroutine() {
         val single = rxSingle<String>(CommonPool) {
-            error(Observable.just("O").awaitSingle() + "K")
+            throw IllegalStateException(Observable.just("O").awaitSingle() + "K")
         }
 
         checkErroneous(single) {

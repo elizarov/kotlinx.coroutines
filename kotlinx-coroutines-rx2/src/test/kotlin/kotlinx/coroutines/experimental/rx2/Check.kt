@@ -23,7 +23,7 @@ fun <T> checkSingleValue(
     observable: Observable<T>,
     checker: (T) -> Unit
 ) {
-    val singleValue = observable.toBlocking().single()
+    val singleValue = observable.blockingSingle()
     checker(singleValue)
 }
 
@@ -31,15 +31,15 @@ fun checkErroneous(
         observable: Observable<*>,
         checker: (Throwable) -> Unit
 ) {
-    val singleNotification = observable.materialize().toBlocking().single()
-    checker(singleNotification.throwable)
+    val singleNotification = observable.materialize().blockingSingle()
+    checker(singleNotification.error)
 }
 
 fun <T> checkSingleValue(
     single: Single<T>,
     checker: (T) -> Unit
 ) {
-    val singleValue = single.toBlocking().value()
+    val singleValue = single.blockingGet()
     checker(singleValue)
 }
 
@@ -48,7 +48,7 @@ fun checkErroneous(
     checker: (Throwable) -> Unit
 ) {
     try {
-        single.toBlocking().value()
+        single.blockingGet()
         error("Should have failed")
     } catch (e: Throwable) {
         checker(e)

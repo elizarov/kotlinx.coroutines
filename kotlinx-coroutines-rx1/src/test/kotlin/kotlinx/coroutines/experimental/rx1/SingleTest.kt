@@ -16,10 +16,11 @@
 
 package kotlinx.coroutines.experimental.rx1
 
-import kotlinx.coroutines.experimental.CommonPool
-import kotlinx.coroutines.experimental.runBlocking
-import org.junit.Assert.assertEquals
-import org.junit.Assert.fail
+import kotlinx.coroutines.experimental.*
+import org.hamcrest.core.IsEqual
+import org.hamcrest.core.IsInstanceOf
+import org.hamcrest.core.IsNull
+import org.junit.Assert.*
 import org.junit.Test
 import rx.Observable
 import rx.Single
@@ -28,7 +29,68 @@ import java.util.concurrent.TimeUnit
 /**
  * Tests emitting single item with [rxSingle].
  */
-class SingleTest {
+class SingleTest : TestBase() {
+    @Test
+    fun testBasicSuccess() = runBlocking<Unit> {
+        expect(1)
+        val single = rxSingle(context) {
+            expect(4)
+            "OK"
+        }
+        expect(2)
+        single.subscribe { value ->
+            expect(5)
+            assertThat(value, IsEqual("OK"))
+        }
+        expect(3)
+        yield() // to started coroutine
+        finish(6)
+    }
+
+    @Test
+    fun testBasicFailure() = runBlocking<Unit> {
+        expect(1)
+        val single = rxSingle(context) {
+            expect(4)
+            throw RuntimeException("OK")
+        }
+        expect(2)
+        single.subscribe({
+            expectUnreached()
+        }, { error ->
+            expect(5)
+            assertThat(error, IsInstanceOf(RuntimeException::class.java))
+            assertThat(error.message, IsEqual("OK"))
+        })
+        expect(3)
+        yield() // to started coroutine
+        finish(6)
+    }
+
+
+    @Test
+    fun testBasicUnsubscribe() = runBlocking<Unit> {
+        expect(1)
+        val single = rxSingle(context) {
+            expect(4)
+            yield() // back to main, will get cancelled
+            expectUnreached()
+        }
+        expect(2)
+        val sub = single.subscribe({
+            expectUnreached()
+        }, { error ->
+            expect(6)
+            assertThat(error, IsInstanceOf(CancellationException::class.java))
+        })
+        expect(3)
+        yield() // to started coroutine
+        expect(5)
+        sub.unsubscribe() // will cancel coroutine
+        yield()
+        finish(7)
+    }
+
     @Test
     fun testSingleNoWait() {
         val single = rxSingle(CommonPool) {
@@ -36,7 +98,7 @@ class SingleTest {
         }
 
         checkSingleValue(single) {
-            assertEquals("OK", it)
+            assertThat(it, IsEqual("OK"))
         }
     }
 
@@ -47,7 +109,7 @@ class SingleTest {
         }
 
         checkSingleValue(single) {
-            assertEquals(null, it)
+            assertThat(it, IsNull())
         }
     }
 
@@ -63,7 +125,7 @@ class SingleTest {
         }
 
         checkSingleValue(single) {
-            assertEquals("OK", it)
+            assertThat(it, IsEqual("OK"))
         }
     }
 
@@ -74,7 +136,7 @@ class SingleTest {
         }
 
         checkSingleValue(single) {
-            assertEquals("OK", it)
+            assertThat(it, IsEqual("OK"))
         }
     }
 
@@ -85,7 +147,7 @@ class SingleTest {
         }
 
         checkErroneous(single) {
-            assert(it is IllegalArgumentException)
+            assertThat(it, IsInstanceOf(IllegalArgumentException::class.java))
         }
     }
 
@@ -96,7 +158,7 @@ class SingleTest {
         }
 
         checkSingleValue(single) {
-            assertEquals("OK", it)
+            assertThat(it, IsEqual("OK"))
         }
     }
 
@@ -107,7 +169,7 @@ class SingleTest {
         }
 
         checkSingleValue(single) {
-            assertEquals("OK", it)
+            assertThat(it, IsEqual("OK"))
         }
     }
 
@@ -122,18 +184,18 @@ class SingleTest {
         }
 
         checkSingleValue(single) {
-            assertEquals("OK", it)
+            assertThat(it, IsEqual("OK"))
         }
     }
 
     @Test
     fun testExceptionFromCoroutine() {
         val single = rxSingle<String>(CommonPool) {
-            error(Observable.just("O").awaitSingle() + "K")
+            throw RuntimeException(Observable.just("O").awaitSingle() + "K")
         }
 
         checkErroneous(single) {
-            assert(it is IllegalStateException)
+            assertThat(it, IsInstanceOf(RuntimeException::class.java))
             assertEquals("OK", it.message)
         }
     }

@@ -14,19 +14,20 @@
  * limitations under the License.
  */
 
-package kotlinx.coroutines.experimental.rx2
+package kotlinx.coroutines.experimental.reactive
 
 import kotlinx.coroutines.experimental.TestBase
 import kotlinx.coroutines.experimental.runBlocking
 import kotlinx.coroutines.experimental.yield
 import org.junit.Test
-import io.reactivex.Subscriber
+import org.reactivestreams.Subscriber
+import org.reactivestreams.Subscription
 
-class ObservableBackpressureTest : TestBase() {
+class PublisherBackpressureTest : TestBase() {
     @Test
     fun testCancelWhileBPSuspended() = runBlocking<Unit> {
         expect(1)
-        val observable = rxObservable(context) {
+        val observable = publish(context) {
             expect(5)
             send("A") // will not suspend, because an item was requested
             expect(7)
@@ -40,10 +41,12 @@ class ObservableBackpressureTest : TestBase() {
             expectUnreached()
         }
         expect(2)
-        val sub = observable.subscribe(object : Subscriber<String>() {
-            override fun onStart() {
+        var sub: Subscription? = null
+        observable.subscribe(object : Subscriber<String> {
+            override fun onSubscribe(s: Subscription) {
+                sub = s
                 expect(3)
-                request(2) // request two items
+                s.request(2) // request two items
             }
 
             override fun onNext(t: String) {
@@ -54,7 +57,7 @@ class ObservableBackpressureTest : TestBase() {
                 }
             }
 
-            override fun onCompleted() {
+            override fun onComplete() {
                 expect(11)
             }
 
@@ -65,7 +68,7 @@ class ObservableBackpressureTest : TestBase() {
         expect(4)
         yield() // yield to observable coroutine
         expect(10)
-        sub.unsubscribe() // now unsubscribe -- shall cancel coroutine & invoke onCompleted
+        sub!!.cancel() // now unsubscribe -- shall cancel coroutine & invoke onCompleted
         expect(12)
         yield() // shall perform finally in coroutine
         finish(14)

@@ -16,25 +16,27 @@
 
 package kotlinx.coroutines.experimental.rx1
 
+import kotlinx.coroutines.experimental.channels.LinkedListChannel
 import kotlinx.coroutines.experimental.channels.ReceiveChannel
-import kotlinx.coroutines.experimental.channels.RendezvousChannel
 import rx.Observable
 import rx.Subscriber
 import rx.Subscription
+import java.util.concurrent.atomic.AtomicIntegerFieldUpdater
 
 /**
  * Return type for [Observable.open] that can be used to [receive] elements from the
- * subscription and to manually [unsubscribe] from it.
+ * subscription and to manually [close] it.
  */
-public interface SubscriptionReceiveChannel<out T> : ReceiveChannel<T>, Subscription
+public interface SubscriptionReceiveChannel<out T> : ReceiveChannel<T> {
+    /**
+     * Closes this subscription channel.
+     */
+    public fun close()
+}
 
 /**
- * Subscribes to this [Observable] and returns a channel to receive elements emitted by it.
- *
- * Note, that [Observable] contract does not conceptually support cancellation of an interest
- * to receive an element. Once the element was requested, there is no way to unrequest it.
- * So, albeit that resulting channel returned by this function supports cancellation of
- * receive invocations, a cancelled receive forces the whole subscription channel to be closed.
+ * Subscribes to this [Observable] and returns a channel to receive elements emitted by it
+ * that can be [closed][SubscriptionReceiveChannel.close] when no longer needed.
  */
 public fun <T> Observable<T>.open(): SubscriptionReceiveChannel<T> {
     val channel = SubscriptionChannel<T>()
@@ -52,20 +54,48 @@ public fun <T> Observable<T>.open(): SubscriptionReceiveChannel<T> {
  */
 public operator fun <T> Observable<T>.iterator() = open().iterator()
 
-private class SubscriptionChannel<T> : RendezvousChannel<T>(), SubscriptionReceiveChannel<T> {
+private class SubscriptionChannel<T> : LinkedListChannel<T>(), SubscriptionReceiveChannel<T> {
+    @JvmField
     val subscriber: ChannelSubscriber = ChannelSubscriber()
 
     @Volatile
+    @JvmField
     var subscription: Subscription? = null
 
+    @Volatile
+    @JvmField
+    var balance = 0 // request balance from cancelled receivers
+
+    private companion object {
+        @JvmStatic
+        val BALANCE: AtomicIntegerFieldUpdater<SubscriptionChannel<*>> =
+            AtomicIntegerFieldUpdater.newUpdater(SubscriptionChannel::class.java, "balance")
+    }
+
     // AbstractChannel overrides
-    override fun onEnqueuedReceive() = subscriber.requestOne()
-    override fun onCancelledReceive() = unsubscribe()
-    override fun afterClose(cause: Throwable?) { subscription?.unsubscribe() }
+    override fun onEnqueuedReceive() {
+        while (true) { // lock-free loop on balance
+            val balance = this.balance
+            if (balance == 0) {
+                subscriber.requestOne()
+                return
+            }
+            if (BALANCE.compareAndSet(this, balance, balance - 1)) return
+        }
+    }
+
+    override fun onCancelledReceive() {
+        BALANCE.incrementAndGet(this)
+    }
+
+    override fun afterClose(cause: Throwable?) {
+        subscription?.unsubscribe()
+    }
 
     // Subscription overrides
-    override fun unsubscribe() { close() }
-    override fun isUnsubscribed(): Boolean = isClosedForSend
+    override fun close() {
+        close(cause = null)
+    }
 
     inner class ChannelSubscriber: Subscriber<T>() {
         fun requestOne() {
@@ -77,16 +107,15 @@ private class SubscriptionChannel<T> : RendezvousChannel<T>(), SubscriptionRecei
         }
 
         override fun onNext(t: T) {
-            check(offer(t)) { "Unrequested onNext invocation with $t" }
+            offer(t)
         }
 
         override fun onCompleted() {
-            check(close()) { "onCompleted on a closed channel"}
+            close(cause = null)
         }
 
-        override fun onError(e: Throwable?) {
-            check(close(e)) { "onError on a closed channel with $e"}
+        override fun onError(e: Throwable) {
+            close(cause = e)
         }
     }
 }
-

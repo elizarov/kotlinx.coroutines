@@ -40,17 +40,6 @@ class ObservableSingleTest {
     }
 
     @Test
-    fun testSingleNullNoWait() {
-        val observable = rxObservable<String?>(CommonPool) {
-            send(null)
-        }
-
-        checkSingleValue(observable) {
-            assertEquals(null, it)
-        }
-    }
-
-    @Test
     fun testSingleAwait() = runBlocking {
         assertEquals("OK", Observable.just("O").awaitSingle() + "K")
     }

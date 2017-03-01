@@ -1,34 +1,28 @@
-# Module kotlinx-coroutines-rx1
+# Module kotlinx-coroutines-reactive
 
-Utilities for [RxJava 1.x](https://github.com/ReactiveX/RxJava/tree/1.x).
+Utilities for [Reactive Streams](http://www.reactive-streams.org).
 
 Coroutine builders:
 
 | **Name**        | **Result**                    | **Scope**        | **Description**
 | --------------- | ----------------------------- | ---------------- | ---------------
-| [rxCompletable] | [Completable][rx.Completable] | [CoroutineScope] | Cold completable that starts coroutine on subscribe
-| [rxSingle]      | [Single][rx.Single]           | [CoroutineScope] | Cold single that starts coroutine on subscribe
-| [rxObservable]  | [Observable][rx.Observable]   | [ProducerScope]  | Cold observable that starts coroutine on subscribe
+| [publish]       | [Publisher][org.reactivestreams.Publisher] | [ProducerScope] | Cold reactive publisher that starts coroutine on subscribe
 
 Suspending extension functions and suspending iteration:
 
 | **Name** | **Description**
 | -------- | ---------------
-| [Completable.await][rx.Completable.await] | Awaits for completion of the completable value 
-| [Single.await][rx.Single.await] | Awaits for completion of the single value and returns it 
-| [Observable.awaitFirst][rx.Observable.awaitFirst] | Returns the first value from the given observable
-| [Observable.awaitLast][rx.Observable.awaitFirst] | Returns the last value from the given observable
-| [Observable.awaitSingle][rx.Observable.awaitSingle] | Returns the single value from the given observable
-| [Observable.open][rx.Observable.open] | Subscribes to observable and returns [ReceiveChannel] 
-| [Observable.iterator][rx.Observable.iterator] | Subscribes to observable and returns [ChannelIterator]
+| [Publisher.awaitFirst][org.reactivestreams.Publisher.awaitFirst] | Returns the first value from the given publisher
+| [Publisher.awaitLast][org.reactivestreams.Publisher.awaitFirst] | Returns the last value from the given publisher
+| [Publisher.awaitSingle][org.reactivestreams.Publisher.awaitSingle] | Returns the single value from the given publisher
+| [Publisher.open][org.reactivestreams.Publisher.open] | Subscribes to publisher and returns [ReceiveChannel] 
+| [Publisher.iterator][org.reactivestreams.Publisher.iterator] | Subscribes to publisher and returns [ChannelIterator]
 
 Conversion functions:
 
 | **Name** | **Description**
 | -------- | ---------------
-| [Job.toCompletable][kotlinx.coroutines.experimental.Job.toCompletable] | Converts job to hot completable
-| [Deferred.toSingle][kotlinx.coroutines.experimental.Deferred.toSingle] | Converts deferred value to hot single
-| [ReceiveChannel.toObservable][kotlinx.coroutines.experimental.channels.ReceiveChannel.toObservable] | Converts streaming channel to hot observable
+| [ReceiveChannel.toPublisher][kotlinx.coroutines.experimental.channels.ReceiveChannel.toPublisher] | Converts streaming channel to hot publisher
 
 <!--- SITE_ROOT https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-core -->
 <!--- DOCS_ROOT kotlinx-coroutines-core/target/dokka/kotlinx-coroutines-core -->
@@ -40,20 +34,20 @@ Conversion functions:
 [ReceiveChannel]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.experimental.channels/-receive-channel/index.html
 <!--- SITE_ROOT https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-rx1 -->
 <!--- DOCS_ROOT kotlinx-coroutines-rx1/target/dokka/kotlinx-coroutines-rx1 -->
-<!--- INDEX kotlinx.coroutines.experimental.rx1 -->
+<!--- INDEX kotlinx.coroutines.experimental.reactive -->
 [kotlinx.coroutines.experimental.Deferred.toSingle]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-rx1/kotlinx.coroutines.experimental.rx1/kotlinx.coroutines.experimental.-deferred/to-single.html
 [kotlinx.coroutines.experimental.channels.ReceiveChannel.toObservable]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-rx1/kotlinx.coroutines.experimental.rx1/kotlinx.coroutines.experimental.channels.-receive-channel/to-observable.html
 [rx.Observable]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-rx1/kotlinx.coroutines.experimental.rx1/rx.-observable/index.html
-[rx.Observable.awaitFirst]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-rx1/kotlinx.coroutines.experimental.rx1/rx.-observable/await-first.html
-[rx.Observable.awaitSingle]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-rx1/kotlinx.coroutines.experimental.rx1/rx.-observable/await-single.html
-[rx.Observable.iterator]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-rx1/kotlinx.coroutines.experimental.rx1/rx.-observable/iterator.html
-[rx.Observable.open]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-rx1/kotlinx.coroutines.experimental.rx1/rx.-observable/open.html
+[org.reactivestreams.Publisher.awaitFirst]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-rx1/kotlinx.coroutines.experimental.rx1/rx.-observable/await-first.html
+[org.reactivestreams.Publisher.awaitSingle]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-rx1/kotlinx.coroutines.experimental.rx1/rx.-observable/await-single.html
+[org.reactivestreams.Publisher.iterator]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-rx1/kotlinx.coroutines.experimental.rx1/rx.-observable/iterator.html
+[org.reactivestreams.Publisher.open]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-rx1/kotlinx.coroutines.experimental.rx1/rx.-observable/open.html
 [rx.Single]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-rx1/kotlinx.coroutines.experimental.rx1/rx.-single/index.html
 [rx.Single.await]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-rx1/kotlinx.coroutines.experimental.rx1/rx.-single/await.html
 [rxObservable]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-rx1/kotlinx.coroutines.experimental.rx1/rx-observable.html
 [rxSingle]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-rx1/kotlinx.coroutines.experimental.rx1/rx-single.html
 <!--- END -->
 
-# Package kotlinx.coroutines.experimental.rx1
+# Package kotlinx.coroutines.experimental.reactive
 
-Utilities for [RxJava 1.x](https://github.com/ReactiveX/RxJava/tree/1.x).
+Utilities for [Reactive Streams](http://www.reactive-streams.org).

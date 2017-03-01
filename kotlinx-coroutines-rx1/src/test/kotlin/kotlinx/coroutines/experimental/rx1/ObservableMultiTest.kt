@@ -28,10 +28,10 @@ import java.io.IOException
 /**
  * Test emitting multiple values with [rxObservable].
  */
-class ObservableMultiTest {
+class ObservableMultiTest : TestBase() {
     @Test
     fun testNumbers() {
-        val n = 100
+        val n = 100 * stressTestMultiplier
         val observable = rxObservable(CommonPool) {
             repeat(n) { send(it) }
         }
@@ -42,7 +42,7 @@ class ObservableMultiTest {
 
     @Test
     fun testConcurrentStress() {
-        val n = 10_000
+        val n = 10_000 * stressTestMultiplier
         val observable = rxObservable<Int>(CommonPool) {
             // concurrent emitters (many coroutines)
             val jobs = List(n) {
@@ -61,7 +61,7 @@ class ObservableMultiTest {
 
     @Test
     fun testIteratorResendUnconfined() {
-        val n = 10_000
+        val n = 10_000 * stressTestMultiplier
         val observable = rxObservable(Unconfined) {
             for (x in Observable.range(0, n))
                 send(x)
@@ -73,7 +73,7 @@ class ObservableMultiTest {
 
     @Test
     fun testIteratorResendPool() {
-        val n = 10_000
+        val n = 10_000 * stressTestMultiplier
         val observable = rxObservable(CommonPool) {
             for (x in Observable.range(0, n))
                 send(x)

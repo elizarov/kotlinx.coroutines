@@ -16,34 +16,30 @@
 
 package kotlinx.coroutines.experimental.rx2
 
-import kotlinx.coroutines.experimental.channels.ReceiveChannel
-import kotlinx.coroutines.experimental.channels.RendezvousChannel
 import io.reactivex.Observable
 import io.reactivex.ObservableSource
 import io.reactivex.Observer
 import io.reactivex.disposables.Disposable
-import io.reactivex.functions.Consumer
-import org.reactivestreams.Subscription
+import kotlinx.coroutines.experimental.channels.LinkedListChannel
+import kotlinx.coroutines.experimental.channels.ReceiveChannel
 
 /**
  * Return type for [Observable.open] that can be used to [receive] elements from the
- * subscription and to manually [cancel] it.
+ * subscription and to manually [close] it.
  */
-public interface SubscriptionReceiveChannel<out T> : ReceiveChannel<T>, Subscription
+public interface SubscriptionReceiveChannel<out T> : ReceiveChannel<T> {
+    /**
+     * Closes this subscription channel.
+     */
+    public fun close()
+}
 
 /**
  * Subscribes to this [Observable] and returns a channel to receive elements emitted by it.
- *
- * Note, that [Observable] contract does not conceptually support cancellation of an interest
- * to receive an element. Once the element was requested, there is no way to unrequest it.
- * So, albeit that resulting channel returned by this function supports cancellation of
- * receive invocations, a cancelled receive forces the whole subscription channel to be closed.
  */
 public fun <T> ObservableSource<T>.open(): SubscriptionReceiveChannel<T> {
     val channel = SubscriptionChannel<T>()
-    val subscription = subscribe(channel.subscriber)
-    channel.subscription = subscription
-    if (channel.isClosedForSend) subscription.unsubscribe()
+    subscribe(channel)
     return channel
 }
 
@@ -55,40 +51,34 @@ public fun <T> ObservableSource<T>.open(): SubscriptionReceiveChannel<T> {
  */
 public operator fun <T> Observable<T>.iterator() = open().iterator()
 
-private class SubscriptionChannel<T> : RendezvousChannel<T>(), SubscriptionReceiveChannel<T> {
-    val subscriber: ChannelSubscriber = ChannelSubscriber()
-
+private class SubscriptionChannel<T> : LinkedListChannel<T>(), SubscriptionReceiveChannel<T>, Observer<T> {
     @Volatile
-    var subscription: Subscription? = null
+    var subscription: Disposable? = null
 
     // AbstractChannel overrides
-    override fun onEnqueuedReceive() = subscriber.requestOne()
-    override fun onCancelledReceive() = unsubscribe()
-    override fun afterClose(cause: Throwable?) { subscription?.unsubscribe() }
+    override fun afterClose(cause: Throwable?) {
+        subscription?.dispose()
+    }
 
     // Subscription overrides
-    override fun cancel() { close() }
+    override fun close() {
+        close(cause = null)
+    }
 
-    inner class ChannelSubscriber: Observer<T>() {
-        fun requestOne() {
-            request(1)
-        }
+    // Observer overrider
+    override fun onSubscribe(sub: Disposable) {
+        subscription = sub
+    }
 
-        override fun onSubscribe(d: Disposable) {
-            // todo:
-        }
+    override fun onNext(t: T) {
+        offer(t)
+    }
 
-        override fun onNext(t: T) {
-            check(offer(t)) { "Unrequested onNext invocation with $t" }
-        }
+    override fun onComplete() {
+        close(cause = null)
+    }
 
-        override fun onComplete() {
-            check(close()) { "onComplete on a closed channel"}
-        }
-
-        override fun onError(e: Throwable?) {
-            check(close(e)) { "onError on a closed channel with $e"}
-        }
+    override fun onError(e: Throwable) {
+        close(cause = e)
     }
 }
-

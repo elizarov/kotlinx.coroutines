@@ -16,18 +16,44 @@
 
 package kotlinx.coroutines.experimental.rx2
 
-import kotlinx.coroutines.experimental.CommonPool
-import kotlinx.coroutines.experimental.Unconfined
-import kotlinx.coroutines.experimental.async
+import kotlinx.coroutines.experimental.*
 import kotlinx.coroutines.experimental.channels.produce
-import kotlinx.coroutines.experimental.delay
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.io.IOException
 
-class ConvertTest {
+class ConvertTest : TestBase() {
     class TestException(s: String): RuntimeException(s)
+
+    @Test
+    fun testToCompletableSuccess() = runBlocking<Unit> {
+        expect(1)
+        val job = launch(context) {
+            expect(3)
+        }
+        val completable = job.toCompletable(context)
+        completable.subscribe {
+            expect(4)
+        }
+        expect(2)
+        yield()
+        finish(5)
+    }
+
+    @Test
+    fun testToCompletableFail() = runBlocking<Unit> {
+        expect(1)
+        val job = async(context + NonCancellable) { // don't kill parent on exception
+            expect(3)
+            throw RuntimeException("OK")
+        }
+        val completable = job.toCompletable(context)
+        completable.subscribe {
+            expect(4)
+        }
+        expect(2)
+        yield()
+        finish(5)
+    }
 
     @Test
     fun testToSingle() {
@@ -70,7 +96,7 @@ class ConvertTest {
             send("K")
         }
         val observable = c.toObservable(Unconfined)
-        checkSingleValue(observable.reduce { t1, t2 -> t1 + t2 }) {
+        checkSingleValue(observable.reduce { t1, t2 -> t1 + t2 }.toSingle()) {
             assertEquals("OK", it)
         }
     }

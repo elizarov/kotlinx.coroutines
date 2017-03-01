@@ -14,52 +14,50 @@
  * limitations under the License.
  */
 
-package kotlinx.coroutines.experimental.rx2
+package kotlinx.coroutines.experimental.rx1
 
-import io.reactivex.Single
-import io.reactivex.SingleEmitter
-import io.reactivex.functions.Cancellable
 import kotlinx.coroutines.experimental.AbstractCoroutine
 import kotlinx.coroutines.experimental.CoroutineScope
 import kotlinx.coroutines.experimental.Job
 import kotlinx.coroutines.experimental.newCoroutineContext
+import rx.*
 import kotlin.coroutines.experimental.CoroutineContext
 import kotlin.coroutines.experimental.startCoroutine
 
 /**
- * Creates cold [single][Single] that will run a given [block] in a coroutine.
- * Every time the returned observable is subscribed, it starts a new coroutine in the specified [context].
- * Coroutine returns a single value. Unsubscribing cancels running coroutine.
+ * Creates cold [Completable] that runs a given [block] in a coroutine.
+ * Every time the returned completable is subscribed, it starts a new coroutine in the specified [context].
+ * Unsubscribing cancels running coroutine.
  *
  * | **Coroutine action**                  | **Signal to subscriber**
  * | ------------------------------------- | ------------------------
- * | Returns a value                       | `onSuccess`
+ * | Completes successfully                | `onCompleted`
  * | Failure with exception or unsubscribe | `onError`
  */
-public fun <T> rxSingle(
+public fun rxCompletable(
     context: CoroutineContext,
-    block: suspend CoroutineScope.() -> T
-): Single<T> = Single.create { subscriber ->
+    block: suspend CoroutineScope.() -> Unit
+): Completable = Completable.create { subscriber ->
     val newContext = newCoroutineContext(context)
-    val coroutine = RxSingleCoroutine(newContext, subscriber)
+    val coroutine = RxCompletableCoroutine(newContext, subscriber)
     coroutine.initParentJob(context[Job])
-    subscriber.setCancellable(coroutine)
+    subscriber.onSubscribe(coroutine)
     block.startCoroutine(coroutine, coroutine)
 }
 
-private class RxSingleCoroutine<T>(
+private class RxCompletableCoroutine(
     override val parentContext: CoroutineContext,
-    private val subscriber: SingleEmitter<T>
-) : AbstractCoroutine<T>(true), Cancellable {
+    private val subscriber: CompletableSubscriber
+) : AbstractCoroutine<Unit>(true), Subscription {
     @Suppress("UNCHECKED_CAST")
     override fun afterCompletion(state: Any?, mode: Int) {
-        if (subscriber.isDisposed) return
         if (state is CompletedExceptionally)
             subscriber.onError(state.exception)
         else
-            subscriber.onSuccess(state as T)
+            subscriber.onCompleted()
     }
 
-    // Cancellable impl
-    override fun cancel() { cancel(cause = null) }
+    // Subscription impl
+    override fun isUnsubscribed(): Boolean = isCompleted
+    override fun unsubscribe() { cancel() }
 }
