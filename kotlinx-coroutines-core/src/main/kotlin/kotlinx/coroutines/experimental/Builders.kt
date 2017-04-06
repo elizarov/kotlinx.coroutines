@@ -16,10 +16,21 @@
 
 package kotlinx.coroutines.experimental
 
+import kotlinx.coroutines.experimental.intrinsics.startCoroutineUndispatched
 import java.util.concurrent.locks.LockSupport
 import kotlin.coroutines.experimental.*
 import kotlin.coroutines.experimental.intrinsics.startCoroutineUninterceptedOrReturn
 import kotlin.coroutines.experimental.intrinsics.suspendCoroutineOrReturn
+
+/**
+ * Defines start option for coroutines builders.
+ * It is used in `start` parameters of [launch], [async], and [actor] functions.
+ */
+enum class CoroutineStart {
+    DEFAULT,
+    LAZY,
+    UNDISPATCHED
+}
 
 // --------------- basic coroutine builders ---------------
 
@@ -42,15 +53,31 @@ import kotlin.coroutines.experimental.intrinsics.suspendCoroutineOrReturn
  *
  * See [newCoroutineContext] for a description of debugging facilities that are available for newly created coroutine.
  */
-fun launch(context: CoroutineContext, start: Boolean = true, block: suspend CoroutineScope.() -> Unit): Job {
+fun launch(
+    context: CoroutineContext,
+    start: CoroutineStart = CoroutineStart.DEFAULT,
+    block: suspend CoroutineScope.() -> Unit): Job
+{
     val newContext = newCoroutineContext(context)
-    val coroutine = if (start)
-        StandaloneCoroutine(newContext, active = true) else
-        LazyStandaloneCoroutine(newContext, block)
+    val coroutine = if (start == CoroutineStart.LAZY)
+        LazyStandaloneCoroutine(newContext, block) else
+        StandaloneCoroutine(newContext, active = true)
     coroutine.initParentJob(context[Job])
-    if (start) block.startCoroutine(coroutine, coroutine)
+    when (start) {
+        CoroutineStart.DEFAULT -> block.startCoroutine(coroutine, coroutine)
+        CoroutineStart.UNDISPATCHED -> block.startCoroutineUndispatched(coroutine, coroutine)
+        CoroutineStart.LAZY -> {} // will start lazily
+    }
     return coroutine
 }
+
+/**
+ * @suppress **Deprecated**: Use `start = CoroutineStart.XXX` parameter
+ */
+@Deprecated(message = "Use `start = CoroutineStart.XXX` parameter",
+    replaceWith = ReplaceWith("launch(context, if (start) CoroutineStart.DEFAULT else CoroutineStart.LAZY)"))
+fun launch(context: CoroutineContext, start: Boolean, block: suspend CoroutineScope.() -> Unit): Job =
+    launch(context, if (start) CoroutineStart.DEFAULT else CoroutineStart.LAZY, block)
 
 /**
  * Calls the specified suspending block with a given coroutine context, suspends until it completes, and returns
