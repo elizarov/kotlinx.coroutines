@@ -46,6 +46,7 @@
         <junit.version>4.12</junit.version>
         <maven.compiler.source>1.6</maven.compiler.source>
         <maven.compiler.target>1.6</maven.compiler.target>
+        <core.docs.url>https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-core/</core.docs.url>
     </properties>
 
     <prerequisites>
@@ -190,11 +191,25 @@
                             <urlSuffix>#L</urlSuffix>
                         </link>
                     </sourceLinks>
+                    <noStdlibLink>true</noStdlibLink> <!-- todo: will not be need when it is published on site -->
+                    <externalDocumentationLinks>
+                        <link> <!-- todo: will not be need when it is published on site -->
+                            <url>https://kotlinlang.org/api/latest/jvm/stdlib/</url>
+                            <packageListUrl>file:///${user.dir}/site/packages/stdlib-package-list</packageListUrl>
+                        </link>
+                        <!--
+                        <link>
+                            <url>https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-core/</url>
+                            <packageListUrl>file:///${user.dir}/site/packages/core-package-list</packageListUrl>
+                        </link>
+                        -->
+                    </externalDocumentationLinks>
                     <includes>
                         <include>${project.basedir}/README.md</include>
                     </includes>
                     <outputFormat>kotlin-website</outputFormat>
                     <jdkVersion>8</jdkVersion>
+                    <skip>true</skip> <!-- children override -->
                 </configuration>
             </plugin>
             <plugin>
