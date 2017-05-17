@@ -16,6 +16,7 @@
 
 package kotlinx.coroutines.experimental
 
+import kotlinx.coroutines.experimental.CoroutineStart.*
 import kotlinx.coroutines.experimental.intrinsics.startCoroutineUndispatched
 import kotlin.coroutines.experimental.Continuation
 import kotlin.coroutines.experimental.startCoroutine
@@ -76,6 +77,22 @@ public enum class CoroutineStart {
      * it is dispatched according to the [CoroutineDispatcher] in its context.
      */
     UNDISPATCHED;
+
+    /**
+     * Starts the corresponding block as a coroutine with this coroutine start strategy.
+     *
+     * * [DEFAULT] uses [startCoroutineCancellable].
+     * * [ATOMIC] uses [startCoroutine].
+     * * [UNDISPATCHED] uses [startCoroutineUndispatched].
+     * * [LAZY] does nothing.
+     */
+    public operator fun <T> invoke(block: suspend () -> T, completion: Continuation<T>) =
+        when (this) {
+            CoroutineStart.DEFAULT -> block.startCoroutineCancellable(completion)
+            CoroutineStart.ATOMIC -> block.startCoroutine(completion)
+            CoroutineStart.UNDISPATCHED -> block.startCoroutineUndispatched(completion)
+            CoroutineStart.LAZY -> Unit // will start lazily
+        }
 
     /**
      * Starts the corresponding block with receiver as a coroutine with this coroutine start strategy.
