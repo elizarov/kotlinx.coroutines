@@ -109,11 +109,17 @@ public abstract class AbstractSendChannel<E> : SendChannel<E> {
     protected fun sendConflated(element: E): Boolean {
         val node = SendBuffered(element)
         if (!queue.addLastIfPrev(node, { it !is ReceiveOrClosed<*> })) return false
-        // remove previous SendBuffered
+        conflatePreviousSendBuffered(node)
+        return true
+    }
+
+    /**
+     * @suppress **This is unstable API and it is subject to change.**
+     */
+    protected fun conflatePreviousSendBuffered(node: LockFreeLinkedListNode) {
         val prev = node.prev
         if (prev is SendBuffered<*>)
             prev.remove()
-        return true
     }
 
     /**
@@ -207,6 +213,7 @@ public abstract class AbstractSendChannel<E> : SendChannel<E> {
             if (receive == null) {
                 // queue empty or has only senders -- try add last "Closed" item to the queue
                 if (queue.addLastIfPrev(closed, { it !is ReceiveOrClosed<*> })) {
+                    onClosed(closed)
                     afterClose(cause)
                     return true
                 }
@@ -217,6 +224,12 @@ public abstract class AbstractSendChannel<E> : SendChannel<E> {
             receive.resumeReceiveClosed(closed)
         }
     }
+
+    /**
+     * Invoked when [Closed] element was just added.
+     * @suppress **This is unstable API and it is subject to change.**
+     */
+    protected open fun onClosed(closed: Closed<E>) {}
 
     /**
      * Invoked after successful [close].
@@ -870,8 +883,8 @@ public class Closed<in E>(
     override val pollResult get() = this
     override fun tryResumeSend(idempotent: Any?): Any? = CLOSE_RESUMED
     override fun completeResumeSend(token: Any) { check(token === CLOSE_RESUMED) }
-    override fun tryResumeReceive(value: E, idempotent: Any?): Any? = throw sendException
-    override fun completeResumeReceive(token: Any) = throw sendException
+    override fun tryResumeReceive(value: E, idempotent: Any?): Any? = CLOSE_RESUMED
+    override fun completeResumeReceive(token: Any) { check(token === CLOSE_RESUMED) }
     override fun toString(): String = "Closed[$closeCause]"
 }
 

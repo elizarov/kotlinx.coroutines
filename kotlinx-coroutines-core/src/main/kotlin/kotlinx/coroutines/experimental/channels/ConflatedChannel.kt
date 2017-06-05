@@ -34,6 +34,14 @@ public open class ConflatedChannel<E> : AbstractChannel<E>() {
     protected final override val isBufferAlwaysFull: Boolean get() = false
     protected final override val isBufferFull: Boolean get() = false
 
+    /**
+     * This implementation conflates last sent item when channel is closed.
+     * @suppress **This is unstable API and it is subject to change.**
+     */
+    override fun onClosed(closed: Closed<E>) {
+        conflatePreviousSendBuffered(closed)
+    }
+
     // result is always `OFFER_SUCCESS | Closed`
     protected override fun offerInternal(element: E): Any {
         while (true) {
