@@ -21,15 +21,15 @@ import kotlinx.coroutines.experimental.channels.ClosedReceiveChannelException
 import kotlinx.coroutines.experimental.channels.ClosedSendChannelException
 import kotlinx.coroutines.experimental.channels.ReceiveChannel
 import kotlinx.coroutines.experimental.channels.SendChannel
-import kotlinx.coroutines.experimental.internal.AtomicDesc
+import kotlinx.coroutines.experimental.internal.*
 import kotlinx.coroutines.experimental.intrinsics.startCoroutineUndispatched
 import kotlinx.coroutines.experimental.sync.Mutex
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReferenceFieldUpdater
 import kotlin.coroutines.experimental.Continuation
 import kotlin.coroutines.experimental.ContinuationInterceptor
 import kotlin.coroutines.experimental.CoroutineContext
 import kotlin.coroutines.experimental.intrinsics.suspendCoroutineOrReturn
-import kotlin.coroutines.experimental.startCoroutine
 
 /**
  * Scope for [select] invocation.
@@ -123,11 +123,11 @@ public interface SelectInstance<in R> {
      */
     public val completion: Continuation<R>
 
-    public fun resumeSelectWithException(exception: Throwable, mode: Int)
+    /**
+     * Resumes this instance with [MODE_CANCELLABLE].
+     */
+    public fun resumeSelectCancellableWithException(exception: Throwable)
 
-    // This function is actually implemented to dispose the handle only when the whole
-    // select expression complete. It is later than it could be, but if resource will get released anyway
-    // :todo: Invoke this function on select really
     public fun disposeOnSelect(handle: DisposableHandle)
 }
 
@@ -180,48 +180,23 @@ public inline suspend fun <R> select(crossinline builder: SelectBuilder<R>.() ->
         } catch (e: Throwable) {
             scope.handleBuilderException(e)
         }
-        scope.initSelectResult()
+        scope.getResult()
     }
 
-/*
-   :todo: It is best to rewrite this class without the use of CancellableContinuationImpl and JobSupport infrastructure
-   This way JobSupport will not have to provide trySelect(idempotent) operation can can save some checks and bytes
-   to carry on that idempotent start token.
- */
+
+internal val ALREADY_SELECTED: Any = Symbol("ALREADY_SELECTED")
+
 @PublishedApi
 internal class SelectBuilderImpl<in R>(
-    delegate: Continuation<R>
-) : CancellableContinuationImpl<R>(delegate, defaultResumeMode = MODE_DIRECT, active = false),
-    SelectBuilder<R>, SelectInstance<R>
-{
-    @PublishedApi
-    internal fun handleBuilderException(e: Throwable) {
-        if (trySelect(idempotent = null)) {
-            val token = tryResumeWithException(e)
-            if (token != null)
-                completeResume(token)
-            else
-                handleCoroutineException(context, e)
-        }
-    }
+    private val delegate: Continuation<R>
+) : LockFreeLinkedListHead(), SelectBuilder<R>, SelectInstance<R>, Continuation<R> {
+    // state is this (list of nodes) initially and is replaced by idempotent marker (or null) when selected
+    @Volatile
+    private var _state: Any? = this
 
-    @PublishedApi
-    internal fun initSelectResult(): Any? {
-        if (!isSelected) initCancellability()
-        return getResult()
-    }
-
-    // coroutines that are started inside this select are directly subordinate to the parent job
-    override fun createContext(): CoroutineContext = delegate.context
-
-    override fun onParentCompletion(cause: Throwable?) {
-        /*
-           Select is cancelled only when no clause was selected yet. If a clause was selected, then
-           it is the concern of the coroutine that was started by that clause to cancel on its suspension
-           points.
-         */
-        if (trySelect(null))
-            super.onParentCompletion(cause)
+    companion object {
+        private val STATE: AtomicReferenceFieldUpdater<SelectBuilderImpl<*>, Any?> =
+            AtomicReferenceFieldUpdater.newUpdater(SelectBuilderImpl::class.java, Any::class.java, "_state")
     }
 
     override val completion: Continuation<R> get() {
@@ -229,9 +204,123 @@ internal class SelectBuilderImpl<in R>(
         return this
     }
 
-    override fun resumeSelectWithException(exception: Throwable, mode: Int) {
+    override val context: CoroutineContext get() = delegate.context
+
+    override fun resume(value: R) {
+        // todo: must implement safe continuation w/direct dispatch
+        TODO("not implemented")
+    }
+
+    override fun resumeWithException(exception: Throwable) {
+        // todo: must implement safe continuation w/direct dispatch
+        TODO("not implemented")
+    }
+
+    override fun resumeSelectCancellableWithException(exception: Throwable) {
         check(isSelected) { "Must be selected first" }
-        resumeWithException(exception, mode)
+        // todo: check mode
+        resumeWithException(exception)
+    }
+
+    @PublishedApi
+    internal fun getResult(): Any? {
+        if (!isSelected) initCancellability()
+        // todo: must implement safe continuation w/direct dispatch
+        TODO()
+    }
+
+    private val state: Any? get() {
+        while (true) { // lock-free helping loop
+            val state = _state
+            if (state !is OpDescriptor) return state
+            state.perform(this)
+        }
+    }
+
+    @PublishedApi
+    internal fun handleBuilderException(e: Throwable) {
+        if (trySelect(null))
+            resumeWithException(e)
+        else
+            handleCoroutineException(context, e)
+    }
+
+    override val isSelected: Boolean get() = state !== this
+
+    override fun disposeOnSelect(handle: DisposableHandle) {
+        val node = DisposeNode(handle)
+        while (true) { // lock-free loop on state
+            val state = this.state
+            if (state === this) {
+                if (addLastIf(node, { this.state === this }))
+                    return
+            } else { // already selected
+                handle.dispose()
+                return
+            }
+        }
+    }
+
+    private fun notifySelectListeners() {
+        forEach<DisposeNode> {
+            it.handle.dispose()
+        }
+    }
+
+    // it is just like start(), but support idempotent start
+    override fun trySelect(idempotent: Any?): Boolean {
+        check(idempotent !is OpDescriptor) { "cannot use OpDescriptor as idempotent marker"}
+        while (true) { // lock-free loop on state
+            val state = this.state
+            when {
+                state === this -> {
+                    if (STATE.compareAndSet(this, this, idempotent)) {
+                        notifySelectListeners()
+                        return true
+                    }
+                }
+                // otherwise -- already selected
+                idempotent == null -> return false // already selected
+                state === idempotent -> return true // was selected with this marker
+                else -> return false
+            }
+        }
+    }
+
+    override fun performAtomicTrySelect(desc: AtomicDesc): Any? = AtomicSelectOp(desc, true).perform(null)
+    override fun performAtomicIfNotSelected(desc: AtomicDesc): Any? = AtomicSelectOp(desc, false).perform(null)
+
+    private inner class AtomicSelectOp(
+        @JvmField val desc: AtomicDesc,
+        @JvmField val select: Boolean
+    ) : AtomicOp() {
+        override fun prepare(): Any? = prepareIfNotSelected() ?: desc.prepare(this)
+
+        override fun complete(affected: Any?, failure: Any?) {
+            completeSelect(failure)
+            desc.complete(this, failure)
+        }
+
+        fun prepareIfNotSelected(): Any? {
+            while (true) { // lock-free loop on state
+                val state = _state
+                when {
+                    state === this@AtomicSelectOp -> return null // already in progress
+                    state is OpDescriptor -> state.perform(this@SelectBuilderImpl) // help
+                    state === this@SelectBuilderImpl -> {
+                        if (STATE.compareAndSet(this@SelectBuilderImpl, this@SelectBuilderImpl, this@AtomicSelectOp))
+                            return null // success
+                    }
+                    else -> return ALREADY_SELECTED
+                }
+            }
+        }
+
+        private fun completeSelect(failure: Any?) {
+            val success = failure == null
+            val update = if (success && select) null else this@SelectBuilderImpl
+            STATE.compareAndSet(this@SelectBuilderImpl, this@AtomicSelectOp, update)
+        }
     }
 
     override fun Job.onJoin(block: suspend () -> R) {
@@ -261,23 +350,23 @@ internal class SelectBuilderImpl<in R>(
     override fun onTimeout(time: Long, unit: TimeUnit, block: suspend () -> R) {
         require(time >= 0) { "Timeout time $time cannot be negative" }
         if (time == 0L) {
-            if (trySelect(idempotent = null))
+            if (trySelect(null))
                 block.startCoroutineUndispatched(completion)
             return
         }
         val action = Runnable {
             // todo: we could have replaced startCoroutine with startCoroutineUndispatched
             // But we need a way to know that Delay.invokeOnTimeout had used the right thread
-            if (trySelect(idempotent = null))
+            if (trySelect(null))
                 block.startCoroutineCancellable(completion) // shall be cancellable while waits for dispatch
         }
         val delay = context[ContinuationInterceptor] as? Delay
         if (delay != null)
             disposeOnSelect(delay.invokeOnTimeout(time, unit, action)) else
-            cancelFutureOnCompletion(scheduledExecutor.schedule(action, time, unit))
+            disposeOnSelect(DisposableFutureHandle(scheduledExecutor.schedule(action, time, unit)))
     }
 
-    override fun disposeOnSelect(handle: DisposableHandle) {
-        invokeOnCompletion(DisposeOnCompletion(this, handle))
-    }
+    private class DisposeNode(
+        @JvmField val handle: DisposableHandle
+    ) : LockFreeLinkedListNode()
 }
