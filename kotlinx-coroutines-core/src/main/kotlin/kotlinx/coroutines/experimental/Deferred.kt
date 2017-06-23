@@ -52,18 +52,11 @@ public interface Deferred<out T> : Job {
     val isCompletedExceptionally: Boolean
 
     /**
-     * Returns `true` if computation of this deferred value was [cancelled][cancel].
-     *
-     * It implies that [isActive] is `false`, [isCompleted] is `true`, and [isCompletedExceptionally] is `true`.
-     */
-    val isCancelled: Boolean
-
-    /**
      * Awaits for completion of this value without blocking a thread and resumes when deferred computation is complete,
      * returning the resulting value or throwing the corresponding exception if the deferred had completed exceptionally.
      *
      * This suspending function is cancellable.
-     * If the [Job] of the current coroutine is completed while this suspending function is waiting, this function
+     * If the [Job] of the current coroutine is cancelled or completed while this suspending function is waiting, this function
      * immediately resumes with [CancellationException].
      *
      * This function can be used in [select] invocation with [onAwait][SelectBuilder.onAwait] clause.
