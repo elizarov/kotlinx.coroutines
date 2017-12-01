@@ -17,7 +17,6 @@
 package kotlinx.coroutines.experimental
 
 import kotlinx.coroutines.experimental.NonCancellable.isActive
-import kotlinx.coroutines.experimental.selects.SelectClause0
 import kotlin.coroutines.experimental.AbstractCoroutineContextElement
 
 /**
@@ -49,26 +48,8 @@ public actual object NonCancellable : AbstractCoroutineContextElement(Job), Job 
         throw UnsupportedOperationException("This job is always active")
     }
 
-    override val onJoin: SelectClause0
-        get() = throw UnsupportedOperationException("This job is always active")
-
     /** Always throws [IllegalStateException]. */
     actual override fun getCancellationException(): CancellationException = throw IllegalStateException("This job is always active")
-
-    /** Always returns [NonDisposableHandle]. */
-    @Suppress("OverridingDeprecatedMember")
-    override fun invokeOnCompletion(handler: CompletionHandler): DisposableHandle =
-        NonDisposableHandle
-
-    /** Always returns [NonDisposableHandle]. */
-    @Suppress("OverridingDeprecatedMember")
-    override fun invokeOnCompletion(handler: CompletionHandler, onCancelling: Boolean): DisposableHandle =
-        NonDisposableHandle
-
-    /** Always returns [NonDisposableHandle]. */
-    @Suppress("OverridingDeprecatedMember")
-    override fun invokeOnCompletion(onCancelling: Boolean, handler: CompletionHandler): DisposableHandle =
-        NonDisposableHandle
 
     /** Always returns [NonDisposableHandle]. */
     actual override fun invokeOnCompletion(onCancelling: Boolean, invokeImmediately: Boolean, handler: CompletionHandler): DisposableHandle =
@@ -84,8 +65,4 @@ public actual object NonCancellable : AbstractCoroutineContextElement(Job), Job 
     /** Always returns [NonDisposableHandle] and does not do anything. */
     @Suppress("OverridingDeprecatedMember")
     actual override fun attachChild(child: Job): DisposableHandle = NonDisposableHandle
-
-    /** Does not do anything. */
-    @Suppress("OverridingDeprecatedMember")
-    override fun cancelChildren(cause: Throwable?) {}
 }
