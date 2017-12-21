@@ -24,6 +24,7 @@ public actual open class TestBase actual constructor() {
      */
     public actual fun expect(index: Int) {
         val wasIndex = ++actionIndex
+        println("#$wasIndex expect($index)")
         check(index == wasIndex) { "Expecting action index $index but it is actually $wasIndex" }
     }
 
