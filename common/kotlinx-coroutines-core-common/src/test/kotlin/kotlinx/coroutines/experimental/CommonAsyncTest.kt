@@ -14,15 +14,15 @@
  * limitations under the License.
  */
 
+@file:Suppress("NAMED_ARGUMENTS_NOT_ALLOWED") // KT-21913
+
 package kotlinx.coroutines.experimental
 
-import org.junit.Assert.assertTrue
-import org.junit.Test
-import java.io.IOException
+import kotlin.test.*
 
-class AsyncTest : TestBase() {
+class CommonAsyncTest : TestBase() {
     @Test
-    fun testSimple(): Unit = runBlocking {
+    fun testSimple() = runTest {
         expect(1)
         val d = async(coroutineContext) {
             expect(3)
@@ -38,7 +38,7 @@ class AsyncTest : TestBase() {
     }
 
     @Test
-    fun testUndispatched(): Unit = runBlocking {
+    fun testUndispatched() = runTest {
         expect(1)
         val d = async(coroutineContext, start = CoroutineStart.UNDISPATCHED) {
             expect(2)
@@ -50,32 +50,36 @@ class AsyncTest : TestBase() {
         finish(4)
     }
 
-    @Test(expected = IOException::class)
-    fun testSimpleException(): Unit = runBlocking {
+    @Test
+    fun testSimpleException() = runTest(
+        expected = { it is TestException }
+    ) {
         expect(1)
         val d = async(coroutineContext) {
             finish(3)
-            throw IOException()
-        }
-        expect(2)
-        d.await() // will throw IOException
-    }
-
-    @Test(expected = IOException::class)
-    fun testDeferAndYieldException(): Unit = runBlocking {
-        expect(1)
-        val d = async(coroutineContext) {
-            expect(3)
-            yield() // no effect, parent waiting
-            finish(4)
-            throw IOException()
+            throw TestException()
         }
         expect(2)
         d.await() // will throw IOException
     }
 
     @Test
-    fun testDeferWithTwoWaiters() = runBlocking {
+    fun testDeferAndYieldException() = runTest(
+        expected = { it is TestException }
+    ) {
+        expect(1)
+        val d = async(coroutineContext) {
+            expect(3)
+            yield() // no effect, parent waiting
+            finish(4)
+            throw TestException()
+        }
+        expect(2)
+        d.await() // will throw IOException
+    }
+
+    @Test
+    fun testDeferWithTwoWaiters() = runTest {
         expect(1)
         val d = async(coroutineContext) {
             expect(5)
@@ -105,7 +109,7 @@ class AsyncTest : TestBase() {
     }
 
     @Test
-    fun testAsyncWithFinally() = runBlocking {
+    fun testAsyncWithFinally() = runTest {
         expect(1)
         val d = async<String>(coroutineContext) {
             expect(3)
@@ -145,7 +149,7 @@ class AsyncTest : TestBase() {
     }
 
     @Test
-    fun testDeferBadClass() = runBlocking {
+    fun testDeferBadClass() = runTest {
         val bad = BadClass()
         val d = async(coroutineContext) {
             expect(1)
@@ -154,4 +158,6 @@ class AsyncTest : TestBase() {
         assertTrue(d.await() === bad)
         finish(2)
     }
+
+    private class TestException : Exception()
 }
