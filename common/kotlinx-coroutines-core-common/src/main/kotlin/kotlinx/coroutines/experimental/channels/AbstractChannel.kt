@@ -171,8 +171,12 @@ public abstract class AbstractSendChannel<E> : SendChannel<E> {
     public final override val isFull: Boolean get() = queue.nextNode !is ReceiveOrClosed<*> && isBufferFull
 
     public final override suspend fun send(element: E) {
+        println("!!! send $element")
         // fast path -- try offer non-blocking
-        if (offer(element)) return
+        if (offer(element)) {
+            println("!!! offer = success")
+            return
+        }
         // slow-path does suspend
         return sendSuspend(element)
     }
@@ -188,6 +192,7 @@ public abstract class AbstractSendChannel<E> : SendChannel<E> {
     }
 
     private suspend fun sendSuspend(element: E): Unit = suspendAtomicCancellableCoroutine(holdCancellability = true) sc@ { cont ->
+        println("!!! sendSuspend $cont")
         val send = SendElement(element, cont)
         loop@ while (true) {
             val enqueueResult = enqueueSend(send)

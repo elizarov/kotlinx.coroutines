@@ -22,6 +22,7 @@ import org.w3c.dom.*
 
 internal class NodeDispatcher : CoroutineDispatcher(), Delay {
     override fun dispatch(context: CoroutineContext, block: Runnable) {
+        println("Dispatch $block")
         setTimeout({ block.run() }, 0)
     }
 

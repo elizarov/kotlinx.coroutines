@@ -43,6 +43,7 @@ public actual open class TestBase actual constructor() {
      * Asserts that this invocation is `index`-th in the execution sequence (counting from one).
      */
     public actual fun expect(index: Int) {
+        println("Expect $index")
         val wasIndex = ++actionIndex
         check(index == wasIndex) { "Expecting action index $index but it is actually $wasIndex" }
     }

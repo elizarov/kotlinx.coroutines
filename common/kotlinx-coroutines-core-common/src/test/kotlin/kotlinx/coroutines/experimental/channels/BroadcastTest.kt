@@ -30,7 +30,9 @@ class BroadcastTest : TestBase() {
             expect(5)
             send(2) // goes to buffer
             expect(6)
-            send(3) // suspends, will not be consumes, but will not be cancelled either
+            println("!!! before send")
+            send(3) // suspends, will not be consumed, but will not be cancelled either
+            println("!!! after send")
             expect(10)
         }
         yield() // has no effect, because default is lazy
@@ -43,7 +45,9 @@ class BroadcastTest : TestBase() {
             expect(8)
         }
         expect(9)
+        println("!!! before yield")
         yield() // to broadcast
+        println("!!! after yield")
         finish(11)
     }
 }
